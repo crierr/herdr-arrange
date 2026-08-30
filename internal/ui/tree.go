@@ -18,8 +18,10 @@ import (
 // bought back goes to the tree.
 const treeChrome = 4
 
-// treeIndent is the left margin every row starts with, selection marker included,
-// so the box-drawing prefixes do not sit against the popup's border.
+// treeIndent is the left margin a row starts with, selection marker included, so
+// the box-drawing prefixes do not sit against the popup's border. A row led by a
+// bracketed shortcut gets one less, which lines its number up with the connectors
+// below it — see renderRow.
 const treeIndent = 3
 
 // rowKind is what selecting a row does.
@@ -226,9 +228,15 @@ func (m Model) renderRow(r row, selected bool) string {
 
 	// A left margin, then the selection marker: the box-drawing prefixes read badly
 	// against the popup's border.
-	gutter := strings.Repeat(" ", treeIndent)
+	indent := treeIndent
+	if r.shortcut != "" && r.branch == "" {
+		// A workspace's "[1]" is a column wider than the "├─" of the tabs under it,
+		// so it starts one column earlier and the number lines up with them.
+		indent--
+	}
+	gutter := strings.Repeat(" ", indent)
 	if selected {
-		gutter = " " + t.cursor.Render("▸") + strings.Repeat(" ", treeIndent-2)
+		gutter = strings.Repeat(" ", indent-2) + t.cursor.Render("▸") + " "
 	}
 
 	body := t.dim.Render(r.branch)
@@ -243,7 +251,7 @@ func (m Model) renderRow(r row, selected bool) string {
 		body += "  " + t.note.Render(r.note)
 	}
 	if selected {
-		body += m.previewSuffix(treeIndent + lipgloss.Width(body))
+		body += m.previewSuffix(indent + lipgloss.Width(body))
 	}
 	return gutter + body
 }

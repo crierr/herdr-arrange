@@ -412,16 +412,16 @@ Single `session.snapshot` call builds everything. Rows are a flat list with a `k
 and scrolled in a `bubbles/viewport`.
 
 ```
-   [1] w1S  herdr-arrange
+  [1] w1S  herdr-arrange
    ├─ t1  main
    │  ├─ p2  claude  (current)              (dimmed)
  ▸ │  └─ p5  nvim  ← swap this pane with p5
    ├─ t2  logs
    │  └─ p7  tail
    └─ [c] new tab in this workspace         (only under the current workspace)
-   [2] wJ  notes
+  [2] wJ  notes
    └─ …
-   [N] new workspace
+  [N] new workspace
 ────────────────────────────────────────────────────────────
  j/k move  enter apply  t layout  esc close
  c new tab here  1-9 workspace  N new workspace

@@ -41,8 +41,10 @@ func selectRow(t *testing.T, m Model, what string, match func(row) bool) Model {
 func TestTreeViewShowsTheWholeSession(t *testing.T) {
 	_, m := treeFixture(t)
 
+	// The workspace rows start a column to the left of the tabs under them, so the
+	// number in "[1]" lines up with their connectors.
 	want := []string{
-		"   [1] w1S  herdr-arrange",
+		"  [1] w1S  herdr-arrange",
 		"   ├─ t1  main  4 panes",
 		"   │  ├─ p1",
 		" ▸ │  ├─ p2  claude  (current)  ← back to layout mode",
@@ -51,10 +53,10 @@ func TestTreeViewShowsTheWholeSession(t *testing.T) {
 		"   ├─ t2  logs  1 pane",
 		"   │  └─ p7  tail",
 		"   └─ [c] new tab in this workspace",
-		"   [2] wJ  notes",
+		"  [2] wJ  notes",
 		"   └─ t1  1 pane",
 		"      └─ p1",
-		"   [N] new workspace",
+		"  [N] new workspace",
 	}
 
 	got := lines(m)
@@ -123,7 +125,7 @@ func TestTreePreviewNamesEveryAction(t *testing.T) {
 			}
 
 			line := lines(m)[m.cursor-m.vp.YOffset]
-			if !strings.HasPrefix(line, " ▸ ") || !strings.Contains(line, "← "+c.want) {
+			if !strings.HasPrefix(strings.TrimLeft(line, " "), "▸ ") || !strings.Contains(line, "← "+c.want) {
 				t.Errorf("the selected line reads %q, want %q beside the cursor", line, c.want)
 			}
 			// And nowhere else: one preview per view, on the row it is about.

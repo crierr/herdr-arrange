@@ -117,7 +117,7 @@ allow* rather than claiming an evenness it cannot deliver.
 is no layout to arrange there, but the pane can still go somewhere.
 
 ```
-   [1] w1S  herdr-arrange
+  [1] w1S  herdr-arrange
    ├─ t1  main  4 panes
    │  ├─ p1
    │  ├─ p2  claude  (current)
@@ -126,10 +126,10 @@ is no layout to arrange there, but the pane can still go somewhere.
    ├─ t2  logs  1 pane
    │  └─ p7  tail
    └─ [c] new tab in this workspace
-   [2] wJ  notes
+  [2] wJ  notes
    └─ t1  1 pane
       └─ p1
-   [N] new workspace
+  [N] new workspace
 ────────────────────────────────────────────────────────────
  j/k move  enter apply  t layout  esc close
  c new tab here  1-9 workspace  N new workspace

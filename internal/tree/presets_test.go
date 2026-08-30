@@ -205,6 +205,33 @@ func TestDetectRejectsAHandBuiltTree(t *testing.T) {
 	}
 }
 
+func TestDetectForDependsOnTheMainPane(t *testing.T) {
+	// The main-* presets mean "this pane is the big one", so which pane is being
+	// asked about changes the answer. The UI relies on this: it detects against the
+	// pane the user is arranging, so the name it shows is the one a number key
+	// would reproduce.
+	main := MainVertical.Build(panes(3), "p0")
+
+	if got, ok := DetectFor(main, "p0"); !ok || got != MainVertical {
+		t.Errorf("DetectFor(%s, p0) = %s, %v", main, got.Name(), ok)
+	}
+	if got, ok := DetectFor(main, "p1"); ok {
+		t.Errorf("DetectFor(%s, p1) = %s, want no match", main, got.Name())
+	}
+
+	// The even-* and tiled presets ignore the main pane entirely.
+	even := EvenHorizontal.Build(panes(4), "p0")
+	for _, pane := range panes(4) {
+		if got, ok := DetectFor(even, pane); !ok || got != EvenHorizontal {
+			t.Errorf("DetectFor(%s, %s) = %s, %v", even, pane, got.Name(), ok)
+		}
+	}
+
+	if _, ok := DetectFor(nil, "p0"); ok {
+		t.Error("DetectFor(nil) should not match")
+	}
+}
+
 func TestNextCyclesAndAlwaysChangesSomething(t *testing.T) {
 	// Pressing space repeatedly must keep changing the layout: never stall on a
 	// preset that happens to render identically to the current one.

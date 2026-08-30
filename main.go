@@ -14,10 +14,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 
+	"github.com/crierr/herdr-arrange/internal/engine"
 	"github.com/crierr/herdr-arrange/internal/herdr"
+	"github.com/crierr/herdr-arrange/internal/ui"
 )
 
 const usage = `arrange — interactive pane move, swap, re-split and layout
@@ -40,7 +43,9 @@ func main() {
 	switch cmd := os.Args[1]; cmd {
 	case "call":
 		err = runCall(os.Args[2:])
-	case "open", "open-tree", "ui", "drain":
+	case "ui":
+		err = runUI()
+	case "open", "open-tree", "drain":
 		err = fmt.Errorf("%s: not implemented yet", cmd)
 	case "-h", "--help", "help":
 		fmt.Print(usage)
@@ -54,6 +59,74 @@ func main() {
 		fmt.Fprintf(os.Stderr, "arrange: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// target names the pane the popup arranges, and which view to open on.
+type target struct {
+	Mode        ui.Mode
+	PaneID      string
+	TabID       string
+	WorkspaceID string
+}
+
+// pluginContext is the part of HERDR_PLUGIN_CONTEXT_JSON we need. A popup is not
+// a pane, so it gets no HERDR_PANE_ID; the pane being arranged is whichever one
+// was focused when the action ran.
+type pluginContext struct {
+	WorkspaceID   string `json:"workspace_id"`
+	TabID         string `json:"tab_id"`
+	FocusedPaneID string `json:"focused_pane_id"`
+}
+
+// resolveTarget works out which pane to arrange. The action passes it explicitly
+// in the popup's environment; falling back to herdr's own context is what makes
+// `arrange ui` runnable by hand during development.
+func resolveTarget() (target, error) {
+	t := target{
+		PaneID:      os.Getenv("ARRANGE_PANE"),
+		TabID:       os.Getenv("ARRANGE_TAB"),
+		WorkspaceID: os.Getenv("ARRANGE_WS"),
+	}
+	if os.Getenv("ARRANGE_MODE") == "tree" {
+		t.Mode = ui.ModeTree
+	}
+
+	if raw := os.Getenv("HERDR_PLUGIN_CONTEXT_JSON"); raw != "" {
+		var ctx pluginContext
+		if err := json.Unmarshal([]byte(raw), &ctx); err != nil {
+			return t, fmt.Errorf("HERDR_PLUGIN_CONTEXT_JSON is not valid JSON: %w", err)
+		}
+		if t.PaneID == "" {
+			t.PaneID = ctx.FocusedPaneID
+		}
+		if t.TabID == "" {
+			t.TabID = ctx.TabID
+		}
+		if t.WorkspaceID == "" {
+			t.WorkspaceID = ctx.WorkspaceID
+		}
+	}
+
+	if t.PaneID == "" {
+		return t, errors.New("no pane to arrange: set ARRANGE_PANE, or run this from a herdr plugin action")
+	}
+	return t, nil
+}
+
+// runUI is the popup itself.
+func runUI() error {
+	t, err := resolveTarget()
+	if err != nil {
+		return err
+	}
+	client, err := herdr.New()
+	if err != nil {
+		return err
+	}
+	// An unset state directory only disables the parking journal, so a hand-run
+	// UI still works — it just has no crash recovery.
+	eng := engine.New(client, os.Getenv("HERDR_PLUGIN_STATE_DIR"), t.PaneID, t.TabID, t.WorkspaceID)
+	return ui.Run(eng, t.Mode)
 }
 
 // runCall is a development aid: it sends one arbitrary method with JSON params

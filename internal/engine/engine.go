@@ -111,7 +111,9 @@ func (e *Engine) Tab(ctx context.Context) (*Tab, error) {
 	e.workspaceID = layout.WorkspaceID
 
 	t := &Tab{Layout: layout, Tree: node}
-	t.Preset, t.HasPreset = tree.Detect(node)
+	// Detect against the operated-on pane, so the name the UI shows is the one a
+	// number key would reproduce.
+	t.Preset, t.HasPreset = tree.DetectFor(node, e.paneID)
 	return t, nil
 }
 
@@ -208,12 +210,23 @@ func (e *Engine) MoveToNewWorkspace(ctx context.Context) error {
 	return e.moveSelf(ctx, herdr.DestNewWorkspace("", ""))
 }
 
-// MoveToTab moves the pane into an existing tab, splitting it downwards.
+// MoveToTab moves the pane into an existing tab, splitting its active pane
+// downwards.
 func (e *Engine) MoveToTab(ctx context.Context, tabID string) error {
+	return e.MoveToTabBeside(ctx, tabID, "")
+}
+
+// MoveToTabBeside moves the pane into an existing tab, splitting a named pane of
+// that tab downwards. An empty targetPaneID lets herdr pick the tab's active pane.
+//
+// This is how the tree view offers panes in other tabs as destinations: pane.swap
+// cannot cross a tab boundary, so landing next to the chosen pane is the closest
+// thing to a cross-tab swap that keeps the terminal alive.
+func (e *Engine) MoveToTabBeside(ctx context.Context, tabID, targetPaneID string) error {
 	if tabID == e.tabID {
 		return tree.ErrNoChange
 	}
-	return e.moveSelf(ctx, herdr.DestTab(tabID, "", herdr.Down, nil))
+	return e.moveSelf(ctx, herdr.DestTab(tabID, targetPaneID, herdr.Down, nil))
 }
 
 // SwapWithPane exchanges the pane with a named pane. Both must be in the same

@@ -149,20 +149,29 @@ func sum(xs []int) int {
 	return t
 }
 
-// Detect reports which preset the tree matches, if any. It compares shape only,
-// not ratios, so a preset that the user has since resized is still recognised.
-//
-// This is what makes `space` cycle predictably: it detects the current preset
-// and applies the next one, with no hidden state.
+// Detect reports which preset the tree matches, if any, taking its first leaf as
+// the main pane — which is where Build puts one.
 func Detect(n *Node) (Preset, bool) {
 	if n == nil {
 		return 0, false
 	}
+	return DetectFor(n, n.FirstLeaf())
+}
+
+// DetectFor reports which preset the tree matches with a given pane as the main
+// one. It compares shape only, not ratios, so a preset the user has since
+// resized is still recognised.
+//
+// The main pane matters: [A | [B / C]] is main-vertical for A but not for B, and
+// naming it main-vertical while B is the pane being arranged would promise
+// something `4` would then change. Detecting against the arranged pane keeps the
+// status line, the number keys and `space` describing the same thing.
+func DetectFor(n *Node, main string) (Preset, bool) {
+	if n == nil {
+		return 0, false
+	}
 	panes := n.Leaves()
-	main := n.FirstLeaf()
 	for _, p := range Presets {
-		// The main-* presets are only recognised when the big pane is the tree's
-		// first leaf, which is where Build puts it.
 		if SameShape(n, p.Build(panes, main)) {
 			return p, true
 		}
@@ -182,7 +191,7 @@ func Next(n *Node, main string) Preset {
 		return Presets[0]
 	}
 	start := 0
-	if cur, ok := Detect(n); ok {
+	if cur, ok := DetectFor(n, main); ok {
 		for i, p := range Presets {
 			if p == cur {
 				start = i + 1

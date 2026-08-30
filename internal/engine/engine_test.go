@@ -51,9 +51,20 @@ func TestTabReadsTheCurrentLayout(t *testing.T) {
 	if eng.TabID() != fake.liveTabs()[0] || eng.WorkspaceID() != "w1" {
 		t.Errorf("engine tracked %s/%s", eng.WorkspaceID(), eng.TabID())
 	}
-	// [p1 | [p2 / p3]] is main-vertical with p1 as the main pane.
+	// [p1 | [p2 / p3]] is main-vertical for p1, but the engine is arranging p2, and
+	// naming it main-vertical would promise something ApplyPreset would change.
+	if tab.HasPreset {
+		t.Errorf("LayoutName = %q, want custom for a pane that is not the main one", tab.LayoutName())
+	}
+
+	// The same shape, read from the pane in the main slot.
+	_, eng, _ = setup(t, r(leaf("p1"), d(leaf("p2"), leaf("p3"))), "p1")
+	tab, err = eng.Tab(context.Background())
+	if err != nil {
+		t.Fatalf("Tab: %v", err)
+	}
 	if !tab.HasPreset || tab.LayoutName() != "main-vertical" {
-		t.Errorf("LayoutName = %q", tab.LayoutName())
+		t.Errorf("LayoutName = %q, want main-vertical", tab.LayoutName())
 	}
 }
 

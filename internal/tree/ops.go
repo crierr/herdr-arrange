@@ -13,16 +13,60 @@ var ErrNoChange = errors.New("no change")
 // ErrNotFound means the pane is not in the tree.
 var ErrNotFound = errors.New("pane not in tab")
 
+// Even returns the tree in which every pane is the same size, along with the axis
+// they end up equal along and whether getting there means moving panes.
+//
+// Equal size means equal width and height, which in a split tree only exists
+// along one axis: a row of equal columns, or a column of equal rows. So Even
+// takes the root split's direction as the axis — the way the tab is divided at
+// the top level — and:
+//
+//   - if every split already shares that axis, only the ratios are wrong, and
+//     re-weighting them by leaf count makes the panes equal without moving one;
+//   - otherwise the tab mixes axes, no set of ratios can make its panes equal,
+//     and it is rebuilt as a balanced row or column.
+//
+// The second case is why reshaped is reported: it costs a park-and-reinsert, so
+// the UI says the tab was rebuilt rather than resized.
+//
+//	[a | [b | c]]        -->  [a | [b | c]]  at 0.33 / 0.5   three equal columns
+//	[[a | b] | [c / d]]  -->  [[a | b] | [c | d]]            four equal columns
+func Even(n *Node) (want *Node, dir herdr.SplitDirection, reshaped bool) {
+	if n == nil || n.IsLeaf() {
+		return n.Clone(), herdr.Right, false
+	}
+	if SharesAxis(n, n.Dir) {
+		return Equalize(n), n.Dir, false
+	}
+	return balanced(n.Leaves(), n.Dir), n.Dir, true
+}
+
+// EvenIsExact reports whether Even can make the panes exactly equal. A balanced
+// rebuild always can; re-weighting an existing shape cannot when one of its
+// splits needs a ratio herdr would clamp.
+func EvenIsExact(n *Node) bool {
+	_, _, reshaped := Even(n)
+	return reshaped || EqualizeIsExact(n)
+}
+
+// SharesAxis reports whether every split in the tree runs along dir, which is
+// what makes a tab a plain row or column however deeply it is nested.
+func SharesAxis(n *Node, dir herdr.SplitDirection) bool {
+	if n == nil || n.IsLeaf() {
+		return true
+	}
+	return n.Dir == dir && SharesAxis(n.First, dir) && SharesAxis(n.Second, dir)
+}
+
 // Equalize returns the tree with every split re-weighted by leaf count, so every
 // pane ends up with the same share of the tab. The shape is untouched, so
 // applying this needs only layout.set_split_ratio calls: no pane moves, no
 // flicker.
 //
-// Equal share means equal *area*, not equal width and height: [[a | b] | [c / d]]
-// gives every pane a quarter of the tab while being four differently shaped
-// rectangles, and Equalize leaves it alone because there is no ratio to change.
-// Identical rectangles are a property of the shape, which is what the presets
-// build — so the UI points at those when this has nothing to do.
+// Equal share is equal *area*, which is equal width and height only when the tab
+// runs along a single axis: [[a | b] | [c / d]] gives every pane a quarter of the
+// tab while being four differently shaped rectangles. Even is what the `e` key
+// uses; this is its no-move half.
 //
 // Ratios are clamped to what herdr accepts, so a hand-built chain deeper than
 // ten panes cannot be made exactly even. EqualizeIsExact reports whether it

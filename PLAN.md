@@ -120,7 +120,7 @@ herdr-arrange/
   internal/tree/
     tree.go                   # BSP model: Leaves(), Paths(), Find(), Clone(), Equal()
     presets.go                # even-h, even-v, main-h, main-v, tiled
-    ops.go                    # ReSplit(dir), Equalize()
+    ops.go                    # ReSplit(dir), Even(), Equalize()
     reconcile.go              # Plan(cur, want) → []Step   ← the whole restructure story
   internal/engine/
     engine.go                 # one pane's operations: read tab, plan, execute, retarget
@@ -248,11 +248,15 @@ Behaviour per key:
 - **`space`** → structurally match the current tree against all five presets and apply the
   next one (stateless; falls back to `1` when nothing matches). The status line names the
   detected preset so `space` is predictable.
-- **`e`** → `tree.Equalize`: keep the shape, set every split's ratio to
-  `leaves(first)/leaves(node)`. Pure `layout.set_split_ratio` calls — non-destructive,
-  no flicker, no pane moves. (Caveat: herdr clamps ratios to [0.1, 0.9], so a right-nested
-  chain of >10 panes cannot be made exactly even. The presets avoid this by building
-  balanced trees, see §5.)
+- **`e`** → `tree.Even`: every pane the same size, like tmux's balance. Equal width and
+  height only exists along one axis, so the axis is the root split's direction, and:
+  a tab whose splits all run that way keeps its shape and gets its ratios re-weighted to
+  `leaves(first)/leaves(node)` (pure `layout.set_split_ratio` — no flicker, no pane moves,
+  `tree.Equalize`); a tab that mixes axes cannot be evened out by any ratio, so it is
+  rebuilt as a balanced row or column and the status line says *rebuilt* rather than
+  *evened out*. (Caveat: herdr clamps ratios to [0.1, 0.9], so a right-nested chain of >10
+  panes cannot be made exactly even without a rebuild it does not need. The presets avoid
+  this by building balanced trees, see §5.)
 - **`c`** → `pane.move {destination:{type:"new_tab", workspace_id: current}, focus:true}`,
   then retarget layout mode at the new tab.
 - **`N`** → `pane.move {destination:{type:"new_workspace"}, focus:true}`. **The response

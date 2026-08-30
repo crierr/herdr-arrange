@@ -9,6 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/crierr/herdr-arrange/internal/engine"
 	"github.com/crierr/herdr-arrange/internal/herdr"
 	"github.com/crierr/herdr-arrange/internal/tree"
 )
@@ -71,22 +72,21 @@ func (m Model) layoutKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		eng := m.eng
 		return m, m.op(nextStay, func(ctx context.Context) (string, error) {
-			exact, err := eng.Equalize(ctx)
+			res, err := eng.Even(ctx)
+			shape := evenShape(res)
 			switch {
 			case errors.Is(err, tree.ErrNoChange):
-				// Equal area is all a ratio change can promise. A tab like
-				// [[a | b] | [c / d]] already gives every pane a quarter, so
-				// there is nothing to set — but the panes are still four
-				// different rectangles, and saying "nothing to change" on its
-				// own reads as a key that does not work. Name the reshape that
-				// would make them identical instead.
-				return "", fmt.Errorf("areas already even — 1/2/5 give equal panes: %w", tree.ErrNoChange)
-			case !exact:
+				return "", fmt.Errorf("already %s: %w", shape, tree.ErrNoChange)
+			case !res.Exact:
 				// Being honest beats claiming an evenness herdr's ratio clamp
 				// will not give us.
-				return "areas evened out as far as herdr's ratio limits allow", err
+				return "evened out as far as herdr's ratio limits allow", err
+			case res.Reshaped:
+				// The tab mixed axes, so this rebuilt it rather than resizing
+				// it: panes moved, and the flicker wants explaining.
+				return "rebuilt as " + shape, err
 			}
-			return "pane areas evened out", err
+			return "evened out to " + shape, err
 		})
 
 	case "c":
@@ -130,6 +130,15 @@ var reSplitKeys = map[string]herdr.Direction{
 	"J": herdr.DirDn, "shift+down": herdr.DirDn,
 	"K": herdr.Up, "shift+up": herdr.Up,
 	"L": herdr.DirRt, "shift+right": herdr.DirRt,
+}
+
+// evenShape names what `e` leaves behind: "4 equal columns", "3 equal rows".
+func evenShape(res engine.EvenResult) string {
+	unit := "columns"
+	if res.Dir == herdr.Down {
+		unit = "rows"
+	}
+	return fmt.Sprintf("%d equal %s", res.Panes, unit)
 }
 
 // dirWord names where a neighbour is, for the swap status line.
@@ -206,7 +215,7 @@ func (m Model) layoutView() string {
 	}
 
 	lines = append(lines,
-		help("e", "even out pane areas", 14, on),
+		help("e", "even out pane sizes", 14, on),
 		help("c", "move pane to a new tab in this workspace", 14, true),
 		help("N", "move pane to a new workspace", 14, true),
 		help("t", "move/swap to another workspace/tab", 14, true),

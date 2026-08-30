@@ -172,22 +172,40 @@ func (e *Engine) CyclePreset(ctx context.Context) (tree.Preset, error) {
 	return preset, e.Reshape(ctx, t, want)
 }
 
-// Equalize gives every pane in the tab an equal share of it without changing the
-// tab's shape, so no pane is moved and nothing flickers. Equal share is equal
-// area, not equal width and height; see tree.Equalize.
+// EvenResult describes what Even did, which the status line needs: the same key
+// either resizes the tab or rebuilds it, and those are worth telling apart.
+type EvenResult struct {
+	// Dir is the axis the panes ended up equal along: right for columns, down
+	// for rows.
+	Dir herdr.SplitDirection
+	// Panes is how many panes were evened out.
+	Panes int
+	// Reshaped is true when the tab mixed axes and had to be rebuilt, which is
+	// the case that moves panes and flickers.
+	Reshaped bool
+	// Exact is false when herdr's ratio clamp stopped the panes coming out
+	// exactly equal, which takes a hand-built chain of more than ten.
+	Exact bool
+}
+
+// Even makes every pane in the tab the same size: equal columns or equal rows,
+// along whichever axis the tab is split at the top level. See tree.Even.
 //
-// It reports whether the result is exactly even: a hand-built chain deeper than
-// ten panes cannot be, because herdr clamps split ratios.
-//
-// Returns tree.ErrNoChange when the shares are already even, which is a shape
-// whose panes differ without any ratio being wrong.
-func (e *Engine) Equalize(ctx context.Context) (exact bool, err error) {
+// The result is filled in even when the error is tree.ErrNoChange, so the UI can
+// say what the tab already is.
+func (e *Engine) Even(ctx context.Context) (EvenResult, error) {
 	t, err := e.Tab(ctx)
 	if err != nil {
-		return false, err
+		return EvenResult{}, err
 	}
-	want := tree.Equalize(t.Tree)
-	return tree.EqualizeIsExact(t.Tree), e.Reshape(ctx, t, want)
+	want, dir, reshaped := tree.Even(t.Tree)
+	res := EvenResult{
+		Dir:      dir,
+		Panes:    t.PaneCount(),
+		Reshaped: reshaped,
+		Exact:    tree.EvenIsExact(t.Tree),
+	}
+	return res, e.Reshape(ctx, t, want)
 }
 
 // Reshape makes the tab match want. It is the single path every structural

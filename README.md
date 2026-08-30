@@ -11,7 +11,7 @@ nothing is respawned: pane ids, terminals, scrollback and running agents all sur
  H/J/K/L  shift+←↓↑→   re-split pane
  1 even-horizontal   2 even-vertical     3 main-horizontal
  4 main-vertical     5 tiled             space cycle presets
- e             even out pane areas
+ e             even out pane sizes
  c             move pane to a new tab in this workspace
  N             move pane to a new workspace
  t             move/swap to another workspace/tab
@@ -72,7 +72,7 @@ Opens on the tab you are in, with the pane you are on as the one being arranged.
 | `H` `J` `K` `L`, shift+arrows | re-split: detach this pane and re-attach it along that edge |
 | `1`–`5` | apply a layout preset, with **this** pane as the main one |
 | `space` | apply the next preset after the one the tab already matches |
-| `e` | give every pane an equal share of the tab, without moving anything |
+| `e` | make every pane the same size: equal columns, or equal rows |
 | `c` | move this pane to a new tab in this workspace |
 | `N` | move this pane to a new workspace |
 | `t` | switch to tree mode |
@@ -86,28 +86,34 @@ no preset matches.
 again gives `[P | [A | B]]`, and once the pane owns a whole tab edge, further presses that
 way do nothing.
 
-`e` only changes split ratios — nothing moves, nothing flickers — which means it can give
-every pane an equal **share of the tab**, not equal width and height. Those are the same
-thing in a row, a column or a grid, and not the same thing in a mixed shape:
+`e` is tmux's balance: every pane the same size, as equal columns or equal rows. Which of
+the two comes from how the tab is divided at the top level, so `e` never turns a layout on
+its side — a stack of rows evens out as rows.
+
+Equal width *and* height only exists along a single axis, so what `e` costs depends on the
+shape it starts from. A tab that already runs one way, however deeply nested, needs nothing
+but new split ratios, so it is instant and no pane moves:
 
 ```
-[[a | b] | [c / d]]     every pane already has a quarter of the tab,
-                        so there is no ratio for `e` to change — but the
-                        four panes are four different rectangles
+[a |0.8 [b |0.9 [c | d]]]   -->   four equal columns, ratios only
 ```
 
-There `e` says *areas already even — 1/2/5 give equal panes*, because identical rectangles
-are a property of the shape, and reshaping is what the preset keys do.
+A tab that mixes both axes cannot be made even by any ratio at all, so `e` rebuilds it as a
+plain row (or column) and says *rebuilt as 4 equal columns* — that one flickers, the way the
+preset keys do:
 
-For the same reason `e` on a tab that already matches a preset looks like it reset the
-layout: presets are built with the same weighting, so their default ratios are the even
-ones. The exception is `main-horizontal` and `main-vertical`, which give the main pane half
-the tab by design — `e` there shrinks it to its equal share of `1/n`.
+```
+[[a | b] | [c / d]]   -->   [[a | b] | [c | d]]   four equal columns
+```
 
-Presets are built as balanced trees, so every split ratio stays near 0.5. herdr clamps
-ratios to `[0.1, 0.9]`, which is also why `e` on a hand-built chain of ten or more panes
-says it evened things out *as far as herdr's ratio limits allow* rather than claiming an
-evenness it cannot deliver.
+Pressing `e` on a tab that is already like that says *already 4 equal columns*. And because
+`even-horizontal` and `even-vertical` are exactly what `e` produces, `e` on those two presets
+has nothing to do — while on `main-horizontal` and `main-vertical` it shrinks the main pane
+from its half of the tab to `1/n`, which does undo what the preset was for.
+
+herdr clamps split ratios to `[0.1, 0.9]`, so a hand-built chain of ten or more columns
+cannot be evened out by ratios alone: there `e` says it did so *as far as herdr's ratio
+limits allow* rather than claiming an evenness it cannot deliver.
 
 ## Tree mode
 
@@ -160,8 +166,9 @@ and the process.
 So a re-split or a preset — anything that changes the tab's shape rather than just its
 ratios — is done by parking panes in a scratch tab called `arrange:parking` and moving them
 back one at a time in the right order. herdr closes the scratch tab when its last pane
-leaves. That is the flicker, and it is why a rearrange takes a moment while a swap (`h/j/k/l`)
-or `e` is instant: those two need no restructuring at all.
+leaves. That is the flicker, and it is why a rearrange takes a moment while a swap
+(`h/j/k/l`) is instant, and `e` is instant whenever it only has to change ratios: no
+restructuring, nothing to park.
 
 If herdr is killed halfway through one of those plans, the panes are still alive, just in the
 wrong tab. Before parking anything the plugin writes what it is about to do to

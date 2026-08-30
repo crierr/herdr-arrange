@@ -96,9 +96,10 @@ func TestPresetAlreadyAppliedFlashes(t *testing.T) {
 	}
 }
 
-// TestEqualizeOnlySetsRatios is the point of having a separate key for it: it
-// must never move a pane, because moving panes is what flickers.
-func TestEqualizeOnlySetsRatios(t *testing.T) {
+// TestEvenOnOneAxisOnlySetsRatios is the point of having a separate key for it:
+// on a tab that is already a row, `e` must never move a pane, because moving
+// panes is what flickers.
+func TestEvenOnOneAxisOnlySetsRatios(t *testing.T) {
 	lopsided := tree.Split(herdr.Right, 0.8,
 		tree.Split(herdr.Right, 0.5, tree.Leaf("w1S:p1"), tree.Leaf(curPane)),
 		tree.Split(herdr.Right, 0.5, tree.Leaf("w1S:p3"), tree.Leaf("w1S:p4")),
@@ -110,19 +111,17 @@ func TestEqualizeOnlySetsRatios(t *testing.T) {
 		t.Fatalf("the root ratio was not evened out; calls were: %s", f.log())
 	}
 	if f.took("move") || f.took("swap") {
-		t.Fatalf("equalize moved a pane: %s", f.log())
+		t.Fatalf("even moved a pane: %s", f.log())
 	}
-	if m.status != "pane areas evened out" {
+	if m.status != "evened out to 4 equal columns" {
 		t.Errorf("status is %q", m.status)
 	}
 }
 
-// TestEqualizeOnAnAlreadyEvenShapeNamesTheWayOut is the report that prompted this
-// wording: [[a | b] | [c / d]] gives every pane a quarter of the tab, so there is
-// no ratio to change — but the four panes are four different rectangles, and a
-// bare "nothing to change" reads as a broken key rather than as a shape the
-// presets have to fix.
-func TestEqualizeOnAnAlreadyEvenShapeNamesTheWayOut(t *testing.T) {
+// TestEvenOnAMixedShapeRebuildsIt: no ratio makes the panes of [[a | b] | [c / d]]
+// the same size, so `e` there is a rebuild into a plain row — and the status line
+// says "rebuilt", because panes moving and the tab flickering wants explaining.
+func TestEvenOnAMixedShapeRebuildsIt(t *testing.T) {
 	mixed := tree.Split(herdr.Right, 0.5,
 		tree.Split(herdr.Right, 0.5, tree.Leaf("w1S:p1"), tree.Leaf(curPane)),
 		tree.Split(herdr.Down, 0.5, tree.Leaf("w1S:p3"), tree.Leaf("w1S:p4")),
@@ -130,10 +129,27 @@ func TestEqualizeOnAnAlreadyEvenShapeNamesTheWayOut(t *testing.T) {
 	f := newFakeClient(mixed)
 	m := press(t, start(t, f, ModeLayout), "e")
 
+	if m.statusKind == statusFail {
+		t.Fatalf("status is %v %q; calls were: %s", m.statusKind, m.status, f.log())
+	}
+	if m.status != "rebuilt as 4 equal columns" {
+		t.Errorf("status is %q", m.status)
+	}
+	if !f.took("move") {
+		t.Errorf("the mixed tab was not rebuilt: %s", f.log())
+	}
+}
+
+// TestEvenOnAnAlreadyEvenTabFlashes: pressing `e` twice must read as "it is
+// already like that", not as a broken key.
+func TestEvenOnAnAlreadyEvenTabFlashes(t *testing.T) {
+	f := newFakeClient(evenFour()) // four equal columns already
+	m := press(t, start(t, f, ModeLayout), "e")
+
 	if m.statusKind != statusFlash {
 		t.Fatalf("status kind is %v (%q), want a flash", m.statusKind, m.status)
 	}
-	if m.status != "areas already even — 1/2/5 give equal panes" {
+	if m.status != "already 4 equal columns" {
 		t.Errorf("status is %q", m.status)
 	}
 	if f.took("ratio") || f.took("move") || f.took("swap") {

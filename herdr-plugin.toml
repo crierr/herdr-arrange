@@ -37,10 +37,15 @@ command = ["bin/arrange", "open-tree"]
 
 # The size here is only a default: the actions above override it per open, because
 # the two views want different heights and tree mode's depends on the session.
+#
+# Unlike an action, a pane is spawned into a PTY, and that path resolves argv[0]
+# through PATH only — a bare `bin/arrange` is reported as "No viable candidates
+# found in PATH" even though it sits in the cwd. Hence the absolute path, via the
+# plugin root herdr puts in the environment.
 [[panes]]
 id = "ui"
 title = "Arrange"
 placement = "popup"
 width = 63
 height = 14
-command = ["bin/arrange", "ui"]
+command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/bin/arrange\" ui"]

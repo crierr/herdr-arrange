@@ -11,7 +11,7 @@ nothing is respawned: pane ids, terminals, scrollback and running agents all sur
  H/J/K/L  shift+←↓↑→   re-split pane
  1 even-horizontal   2 even-vertical     3 main-horizontal
  4 main-vertical     5 tiled             space cycle presets
- e             even out pane sizes
+ e             even out pane areas
  c             move pane to a new tab in this workspace
  N             move pane to a new workspace
  t             move/swap to another workspace/tab
@@ -72,7 +72,7 @@ Opens on the tab you are in, with the pane you are on as the one being arranged.
 | `H` `J` `K` `L`, shift+arrows | re-split: detach this pane and re-attach it along that edge |
 | `1`–`5` | apply a layout preset, with **this** pane as the main one |
 | `space` | apply the next preset after the one the tab already matches |
-| `e` | even out the split sizes without moving anything |
+| `e` | give every pane an equal share of the tab, without moving anything |
 | `c` | move this pane to a new tab in this workspace |
 | `N` | move this pane to a new workspace |
 | `t` | switch to tree mode |
@@ -85,6 +85,24 @@ no preset matches.
 `H/J/K/L` walk outwards. Pressing `H` on `[A | [P / B]]` gives `[A | [P | B]]`; pressing it
 again gives `[P | [A | B]]`, and once the pane owns a whole tab edge, further presses that
 way do nothing.
+
+`e` only changes split ratios — nothing moves, nothing flickers — which means it can give
+every pane an equal **share of the tab**, not equal width and height. Those are the same
+thing in a row, a column or a grid, and not the same thing in a mixed shape:
+
+```
+[[a | b] | [c / d]]     every pane already has a quarter of the tab,
+                        so there is no ratio for `e` to change — but the
+                        four panes are four different rectangles
+```
+
+There `e` says *areas already even — 1/2/5 give equal panes*, because identical rectangles
+are a property of the shape, and reshaping is what the preset keys do.
+
+For the same reason `e` on a tab that already matches a preset looks like it reset the
+layout: presets are built with the same weighting, so their default ratios are the even
+ones. The exception is `main-horizontal` and `main-vertical`, which give the main pane half
+the tab by design — `e` there shrinks it to its equal share of `1/n`.
 
 Presets are built as balanced trees, so every split ratio stays near 0.5. herdr clamps
 ratios to `[0.1, 0.9]`, which is also why `e` on a hand-built chain of ten or more panes

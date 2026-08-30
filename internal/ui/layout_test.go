@@ -112,8 +112,32 @@ func TestEqualizeOnlySetsRatios(t *testing.T) {
 	if f.took("move") || f.took("swap") {
 		t.Fatalf("equalize moved a pane: %s", f.log())
 	}
-	if m.status != "sizes evened out" {
+	if m.status != "pane areas evened out" {
 		t.Errorf("status is %q", m.status)
+	}
+}
+
+// TestEqualizeOnAnAlreadyEvenShapeNamesTheWayOut is the report that prompted this
+// wording: [[a | b] | [c / d]] gives every pane a quarter of the tab, so there is
+// no ratio to change — but the four panes are four different rectangles, and a
+// bare "nothing to change" reads as a broken key rather than as a shape the
+// presets have to fix.
+func TestEqualizeOnAnAlreadyEvenShapeNamesTheWayOut(t *testing.T) {
+	mixed := tree.Split(herdr.Right, 0.5,
+		tree.Split(herdr.Right, 0.5, tree.Leaf("w1S:p1"), tree.Leaf(curPane)),
+		tree.Split(herdr.Down, 0.5, tree.Leaf("w1S:p3"), tree.Leaf("w1S:p4")),
+	)
+	f := newFakeClient(mixed)
+	m := press(t, start(t, f, ModeLayout), "e")
+
+	if m.statusKind != statusFlash {
+		t.Fatalf("status kind is %v (%q), want a flash", m.statusKind, m.status)
+	}
+	if m.status != "areas already even — 1/2/5 give equal panes" {
+		t.Errorf("status is %q", m.status)
+	}
+	if f.took("ratio") || f.took("move") || f.took("swap") {
+		t.Errorf("the tab was touched anyway: %s", f.log())
 	}
 }
 

@@ -13,12 +13,20 @@ var ErrNoChange = errors.New("no change")
 // ErrNotFound means the pane is not in the tree.
 var ErrNotFound = errors.New("pane not in tab")
 
-// Equalize returns the tree with every split re-weighted by leaf count, so all
-// panes end up the same size. The shape is untouched, so applying this needs
-// only layout.set_split_ratio calls: no pane moves, no flicker.
+// Equalize returns the tree with every split re-weighted by leaf count, so every
+// pane ends up with the same share of the tab. The shape is untouched, so
+// applying this needs only layout.set_split_ratio calls: no pane moves, no
+// flicker.
+//
+// Equal share means equal *area*, not equal width and height: [[a | b] | [c / d]]
+// gives every pane a quarter of the tab while being four differently shaped
+// rectangles, and Equalize leaves it alone because there is no ratio to change.
+// Identical rectangles are a property of the shape, which is what the presets
+// build — so the UI points at those when this has nothing to do.
 //
 // Ratios are clamped to what herdr accepts, so a hand-built chain deeper than
-// ten panes cannot be made exactly even. Exactly() reports whether it worked.
+// ten panes cannot be made exactly even. EqualizeIsExact reports whether it
+// worked.
 func Equalize(n *Node) *Node {
 	if n == nil || n.IsLeaf() {
 		return n.Clone()
@@ -28,7 +36,7 @@ func Equalize(n *Node) *Node {
 	return Split(n.Dir, Clamp(ratio), Equalize(n.First), Equalize(n.Second))
 }
 
-// EqualizeIsExact reports whether Equalize can make every pane the same size,
+// EqualizeIsExact reports whether Equalize can give every pane an equal share,
 // which it cannot when a split's true weight falls outside herdr's clamp.
 func EqualizeIsExact(n *Node) bool {
 	if n == nil || n.IsLeaf() {

@@ -172,11 +172,15 @@ func (e *Engine) CyclePreset(ctx context.Context) (tree.Preset, error) {
 	return preset, e.Reshape(ctx, t, want)
 }
 
-// Equalize gives every pane in the tab the same size without changing the
-// tab's shape, so no pane is moved and nothing flickers.
+// Equalize gives every pane in the tab an equal share of it without changing the
+// tab's shape, so no pane is moved and nothing flickers. Equal share is equal
+// area, not equal width and height; see tree.Equalize.
 //
 // It reports whether the result is exactly even: a hand-built chain deeper than
 // ten panes cannot be, because herdr clamps split ratios.
+//
+// Returns tree.ErrNoChange when the shares are already even, which is a shape
+// whose panes differ without any ratio being wrong.
 func (e *Engine) Equalize(ctx context.Context) (exact bool, err error) {
 	t, err := e.Tab(ctx)
 	if err != nil {

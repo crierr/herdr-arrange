@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -71,12 +72,21 @@ func (m Model) layoutKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		eng := m.eng
 		return m, m.op(nextStay, func(ctx context.Context) (string, error) {
 			exact, err := eng.Equalize(ctx)
-			if !exact {
+			switch {
+			case errors.Is(err, tree.ErrNoChange):
+				// Equal area is all a ratio change can promise. A tab like
+				// [[a | b] | [c / d]] already gives every pane a quarter, so
+				// there is nothing to set — but the panes are still four
+				// different rectangles, and saying "nothing to change" on its
+				// own reads as a key that does not work. Name the reshape that
+				// would make them identical instead.
+				return "", fmt.Errorf("areas already even — 1/2/5 give equal panes: %w", tree.ErrNoChange)
+			case !exact:
 				// Being honest beats claiming an evenness herdr's ratio clamp
 				// will not give us.
-				return "sizes evened out as far as herdr's ratio limits allow", err
+				return "areas evened out as far as herdr's ratio limits allow", err
 			}
-			return "sizes evened out", err
+			return "pane areas evened out", err
 		})
 
 	case "c":
@@ -196,7 +206,7 @@ func (m Model) layoutView() string {
 	}
 
 	lines = append(lines,
-		help("e", "even out pane sizes", 14, on),
+		help("e", "even out pane areas", 14, on),
 		help("c", "move pane to a new tab in this workspace", 14, true),
 		help("N", "move pane to a new workspace", 14, true),
 		help("t", "move/swap to another workspace/tab", 14, true),

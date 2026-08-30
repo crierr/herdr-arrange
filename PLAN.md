@@ -153,7 +153,7 @@ placement (CLI enum is `overlay|split|tab|zoomed`) and `layout.*` has no CLI wra
 ### Manifest
 
 ```toml
-id = "soh.arrange"
+id = "herdr-arrange"
 name = "Arrange"
 version = "0.1.0"
 min_herdr_version = "0.7.4"       # popup placement (0.7.4); layout.set_split_ratio (0.7.2)
@@ -236,15 +236,15 @@ Keybindings are the user's to add (plugins cannot register keys). README will do
 
 ```toml
 [[keys.command]]
-key = "prefix+a"
+key = "prefix+m"
 type = "plugin_action"
-command = "soh.arrange.open"
+command = "herdr-arrange.open"
 description = "arrange panes"
 
 [[keys.command]]
-key = "prefix+A"
+key = "prefix+M"
 type = "plugin_action"
-command = "soh.arrange.open-tree"
+command = "herdr-arrange.open-tree"
 description = "move pane to…"
 ```
 

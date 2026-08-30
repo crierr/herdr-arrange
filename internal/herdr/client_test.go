@@ -199,7 +199,7 @@ func TestCallSurfacesAPIError(t *testing.T) {
 		return nil, &APIError{Code: "ui_busy", Message: "a dialog is open"}
 	})
 
-	err := s.client().OpenPopup(context.Background(), PopupOptions{PluginID: "soh.arrange", Entrypoint: "ui"})
+	err := s.client().OpenPopup(context.Background(), PopupOptions{PluginID: "herdr-arrange", Entrypoint: "ui"})
 	if err == nil {
 		t.Fatal("want error")
 	}

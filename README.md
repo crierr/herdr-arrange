@@ -1,6 +1,8 @@
 # herdr-arrange
 
-Interactive pane move, swap, re-split and layout for [herdr](https://herdr.dev), in a popup.
+A popup for rearranging [herdr](https://herdr.dev) panes, anchored on the pane you are
+already in: swap it with a neighbour, re-split around it, resize it, lay the whole tab out
+to a preset, or send it to any other tab or workspace in the session.
 
 Two views. **Layout mode** rearranges the panes of the current tab; **tree mode** sends the
 pane you are on to another tab or workspace. Everything moves live behind the popup, and
@@ -44,15 +46,15 @@ Then bind it. Plugins cannot register keys, so this part is yours; add it to
 
 ```toml
 [[keys.command]]
-key = "prefix+a"
+key = "prefix+m"
 type = "plugin_action"
-command = "soh.arrange.open"
+command = "herdr-arrange.open"
 description = "arrange panes"
 
 [[keys.command]]
-key = "prefix+A"
+key = "prefix+M"
 type = "plugin_action"
-command = "soh.arrange.open-tree"
+command = "herdr-arrange.open-tree"
 description = "move pane to…"
 ```
 
@@ -60,7 +62,7 @@ description = "move pane to…"
 own plugin action list, so you can try them before binding anything:
 
 ```sh
-herdr plugin action invoke soh.arrange.open
+herdr plugin action invoke herdr-arrange.open
 ```
 
 To work on the plugin instead of installing a release:
@@ -133,7 +135,7 @@ allow* rather than claiming an evenness it cannot deliver.
 
 ## Tree mode
 
-`prefix+A` opens straight here, and so does `prefix+a` on a tab with only one pane — there
+`prefix+M` opens straight here, and so does `prefix+m` on a tab with only one pane — there
 is no layout to arrange there, but the pane can still go somewhere.
 
 ```

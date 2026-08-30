@@ -18,7 +18,7 @@ import (
 // installed id in the environment, which is what we prefer; the constant is the
 // fallback for running an action by hand.
 const (
-	defaultPluginID = "soh.arrange"
+	defaultPluginID = "herdr-arrange"
 	uiEntrypointID  = "ui"
 )
 

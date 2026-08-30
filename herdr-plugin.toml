@@ -1,4 +1,4 @@
-id = "soh.arrange"
+id = "herdr-arrange"
 name = "Arrange"
 version = "0.1.0"
 description = "Interactive pane move, swap, re-split and layout"

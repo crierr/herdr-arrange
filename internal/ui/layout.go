@@ -9,7 +9,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/crierr/herdr-arrange/internal/engine"
 	"github.com/crierr/herdr-arrange/internal/herdr"
 	"github.com/crierr/herdr-arrange/internal/tree"
 )
@@ -72,21 +71,16 @@ func (m Model) layoutKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		eng := m.eng
 		return m, m.op(nextStay, func(ctx context.Context) (string, error) {
-			res, err := eng.Even(ctx)
-			shape := evenShape(res)
+			exact, err := eng.Balance(ctx)
 			switch {
 			case errors.Is(err, tree.ErrNoChange):
-				return "", fmt.Errorf("already %s: %w", shape, tree.ErrNoChange)
-			case !res.Exact:
+				return "", fmt.Errorf("the pane sizes are already even: %w", tree.ErrNoChange)
+			case !exact:
 				// Being honest beats claiming an evenness herdr's ratio clamp
 				// will not give us.
 				return "evened out as far as herdr's ratio limits allow", err
-			case res.Reshaped:
-				// The tab mixed axes, so this rebuilt it rather than resizing
-				// it: panes moved, and the flicker wants explaining.
-				return "rebuilt as " + shape, err
 			}
-			return "evened out to " + shape, err
+			return "pane sizes evened out", err
 		})
 
 	case "c":
@@ -130,15 +124,6 @@ var reSplitKeys = map[string]herdr.Direction{
 	"J": herdr.DirDn, "shift+down": herdr.DirDn,
 	"K": herdr.Up, "shift+up": herdr.Up,
 	"L": herdr.DirRt, "shift+right": herdr.DirRt,
-}
-
-// evenShape names what `e` leaves behind: "4 equal columns", "3 equal rows".
-func evenShape(res engine.EvenResult) string {
-	unit := "columns"
-	if res.Dir == herdr.Down {
-		unit = "rows"
-	}
-	return fmt.Sprintf("%d equal %s", res.Panes, unit)
 }
 
 // dirWord names where a neighbour is, for the swap status line.

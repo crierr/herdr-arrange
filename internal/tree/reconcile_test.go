@@ -247,20 +247,21 @@ func TestPlanReachesEveryReSplit(t *testing.T) {
 	}
 }
 
-// TestPlanReachesEqualize covers the `e` key, and checks it never moves a pane.
-func TestPlanReachesEqualize(t *testing.T) {
+// TestPlanReachesBalance covers the `e` key, and checks it never moves a pane:
+// balancing is ratios only, whatever shape the tab is in.
+func TestPlanReachesBalance(t *testing.T) {
 	g := newRand(4)
 	for range 500 {
 		cur := randomTree(g, 1+g.intn(9))
-		want := Equalize(cur)
+		want := Balance(cur)
 
 		steps, err := Plan(cur, want)
 		if err != nil {
-			t.Fatalf("Plan(%s, equalize): %v", cur, err)
+			t.Fatalf("Plan(%s, balance): %v", cur, err)
 		}
 		for _, s := range steps {
 			if s.Kind != StepSetRatio {
-				t.Fatalf("equalize should only resize, got %s in %v", s, steps)
+				t.Fatalf("balancing should only resize, got %s in %v", s, steps)
 			}
 		}
 		got, err := Simulate(cur, steps)
@@ -268,48 +269,12 @@ func TestPlanReachesEqualize(t *testing.T) {
 			t.Fatalf("Simulate: %v", err)
 		}
 		if !Equal(got, want) {
-			t.Fatalf("equalize %s: got %#v, want %#v", cur, got, want)
+			t.Fatalf("balance %s: got %#v, want %#v", cur, got, want)
 		}
-	}
-}
-
-// TestPlanReachesEven covers what `e` actually costs on an arbitrary tab: a tab
-// that already runs one way is only resized, and one that mixes axes is rebuilt.
-func TestPlanReachesEven(t *testing.T) {
-	g := newRand(7)
-	resized, rebuilt := 0, 0
-	for range 500 {
-		cur := randomTree(g, 1+g.intn(9))
-		want, dir, reshaped := Even(cur)
-
-		steps, err := Plan(cur, want)
-		if err != nil {
-			t.Fatalf("Plan(%s, even): %v", cur, err)
+		// Balancing an already balanced tab is a no-op, so `e` settles.
+		if !Equal(Balance(got), got) {
+			t.Fatalf("balance %s is not settled: %#v", cur, Balance(got))
 		}
-		if reshaped {
-			rebuilt++
-		} else {
-			resized++
-			for _, s := range steps {
-				if s.Kind != StepSetRatio {
-					t.Fatalf("evening out %s needs no moves, got %s in %v", cur, s, steps)
-				}
-			}
-		}
-
-		got, err := Simulate(cur, steps)
-		if err != nil {
-			t.Fatalf("Simulate: %v", err)
-		}
-		if !Equal(got, want) {
-			t.Fatalf("even %s: got %#v, want %#v", cur, got, want)
-		}
-		if !SharesAxis(got, dir) {
-			t.Fatalf("even %s left panes that cannot be equal: %s", cur, got)
-		}
-	}
-	if resized == 0 || rebuilt == 0 {
-		t.Errorf("only saw one of the two paths: %d resized, %d rebuilt", resized, rebuilt)
 	}
 }
 

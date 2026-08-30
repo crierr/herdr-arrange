@@ -13,85 +13,58 @@ var ErrNoChange = errors.New("no change")
 // ErrNotFound means the pane is not in the tree.
 var ErrNotFound = errors.New("pane not in tab")
 
-// Even returns the tree in which every pane is the same size, along with the axis
-// they end up equal along and whether getting there means moving panes.
+// Balance returns the tree with every split re-weighted so that the cells either
+// side of it get the same room along that split's own axis. The shape is
+// untouched, so applying it needs only layout.set_split_ratio calls: no pane
+// moves, no flicker. This is what the `e` key does, and what tmux's
+// `select-layout -E` does.
 //
-// Equal size means equal width and height, which in a split tree only exists
-// along one axis: a row of equal columns, or a column of equal rows. So Even
-// takes the root split's direction as the axis — the way the tab is divided at
-// the top level — and:
+// A child that carries on along the same axis is a run of that many cells; a
+// child that splits the other way is one cell, however many panes are inside it.
+// So the panes that share an axis come out the same size, and the layout is left
+// as it is:
 //
-//   - if every split already shares that axis, only the ratios are wrong, and
-//     re-weighting them by leaf count makes the panes equal without moving one;
-//   - otherwise the tab mixes axes, no set of ratios can make its panes equal,
-//     and it is rebuilt as a balanced row or column.
+//	[a |0.8 [b | c]]        -->  [a |0.33 [b |0.5 c]]  three equal columns
+//	[[a | b] |0.5 [c / d]]  -->  [[a | b] |0.67 [c / d]]
+//	                             three equal columns, the last split in two
 //
-// The second case is why reshaped is reported: it costs a park-and-reinsert, so
-// the UI says the tab was rebuilt rather than resized.
-//
-//	[a | [b | c]]        -->  [a | [b | c]]  at 0.33 / 0.5   three equal columns
-//	[[a | b] | [c / d]]  -->  [[a | b] | [c | d]]            four equal columns
-func Even(n *Node) (want *Node, dir herdr.SplitDirection, reshaped bool) {
-	if n == nil || n.IsLeaf() {
-		return n.Clone(), herdr.Right, false
-	}
-	if SharesAxis(n, n.Dir) {
-		return Equalize(n), n.Dir, false
-	}
-	return balanced(n.Leaves(), n.Dir), n.Dir, true
-}
-
-// EvenIsExact reports whether Even can make the panes exactly equal. A balanced
-// rebuild always can; re-weighting an existing shape cannot when one of its
-// splits needs a ratio herdr would clamp.
-func EvenIsExact(n *Node) bool {
-	_, _, reshaped := Even(n)
-	return reshaped || EqualizeIsExact(n)
-}
-
-// SharesAxis reports whether every split in the tree runs along dir, which is
-// what makes a tab a plain row or column however deeply it is nested.
-func SharesAxis(n *Node, dir herdr.SplitDirection) bool {
-	if n == nil || n.IsLeaf() {
-		return true
-	}
-	return n.Dir == dir && SharesAxis(n.First, dir) && SharesAxis(n.Second, dir)
-}
-
-// Equalize returns the tree with every split re-weighted by leaf count, so every
-// pane ends up with the same share of the tab. The shape is untouched, so
-// applying this needs only layout.set_split_ratio calls: no pane moves, no
-// flicker.
-//
-// Equal share is equal *area*, which is equal width and height only when the tab
-// runs along a single axis: [[a | b] | [c / d]] gives every pane a quarter of the
-// tab while being four differently shaped rectangles. Even is what the `e` key
-// uses; this is its no-move half.
-//
-// Ratios are clamped to what herdr accepts, so a hand-built chain deeper than
-// ten panes cannot be made exactly even. EqualizeIsExact reports whether it
-// worked.
-func Equalize(n *Node) *Node {
+// Ratios are clamped to what herdr accepts, so a hand-built run of more than ten
+// cells along one axis cannot be evened out exactly. BalanceIsExact reports
+// whether it worked.
+func Balance(n *Node) *Node {
 	if n == nil || n.IsLeaf() {
 		return n.Clone()
 	}
-	first, second := n.First.Count(), n.Second.Count()
-	ratio := float64(first) / float64(first+second)
-	return Split(n.Dir, Clamp(ratio), Equalize(n.First), Equalize(n.Second))
+	return Split(n.Dir, Clamp(balanceRatio(n)), Balance(n.First), Balance(n.Second))
 }
 
-// EqualizeIsExact reports whether Equalize can give every pane an equal share,
-// which it cannot when a split's true weight falls outside herdr's clamp.
-func EqualizeIsExact(n *Node) bool {
+// BalanceIsExact reports whether Balance can give the cells of every split equal
+// room, which it cannot when a split's true weight falls outside herdr's clamp.
+func BalanceIsExact(n *Node) bool {
 	if n == nil || n.IsLeaf() {
 		return true
 	}
-	first, second := n.First.Count(), n.Second.Count()
-	ratio := float64(first) / float64(first+second)
-	if Clamp(ratio) != ratio {
+	if ratio := balanceRatio(n); Clamp(ratio) != ratio {
 		return false
 	}
-	return EqualizeIsExact(n.First) && EqualizeIsExact(n.Second)
+	return BalanceIsExact(n.First) && BalanceIsExact(n.Second)
+}
+
+// balanceRatio is the split's share of the room its two sides should get.
+func balanceRatio(n *Node) float64 {
+	first, second := cells(n.First, n.Dir), cells(n.Second, n.Dir)
+	return float64(first) / float64(first+second)
+}
+
+// cells counts the sibling cells a subtree contributes to a split along dir. A
+// split that carries on along dir is a run of cells; anything else is one cell,
+// because its own panes are divided the other way and do not compete for room
+// along dir.
+func cells(n *Node, dir herdr.SplitDirection) int {
+	if n == nil || n.IsLeaf() || n.Dir != dir {
+		return 1
+	}
+	return cells(n.First, dir) + cells(n.Second, dir)
 }
 
 // ReSplit moves a pane to one side of a larger region of the tab: the shift-key

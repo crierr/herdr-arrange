@@ -72,7 +72,7 @@ Opens on the tab you are in, with the pane you are on as the one being arranged.
 | `H` `J` `K` `L`, shift+arrows | re-split: detach this pane and re-attach it along that edge |
 | `1`–`5` | apply a layout preset, with **this** pane as the main one |
 | `space` | apply the next preset after the one the tab already matches |
-| `e` | make every pane the same size: equal columns, or equal rows |
+| `e` | even out the pane sizes, without changing the layout |
 | `c` | move this pane to a new tab in this workspace |
 | `N` | move this pane to a new workspace |
 | `t` | switch to tree mode |
@@ -86,34 +86,30 @@ no preset matches.
 again gives `[P | [A | B]]`, and once the pane owns a whole tab edge, further presses that
 way do nothing.
 
-`e` is tmux's balance: every pane the same size, as equal columns or equal rows. Which of
-the two comes from how the tab is divided at the top level, so `e` never turns a layout on
-its side — a stack of rows evens out as rows.
-
-Equal width *and* height only exists along a single axis, so what `e` costs depends on the
-shape it starts from. A tab that already runs one way, however deeply nested, needs nothing
-but new split ratios, so it is instant and no pane moves:
+`e` is tmux's `select-layout -E`: it evens out the sizes and leaves the layout alone. Every
+split is re-weighted so that the cells either side of it get the same room along that
+split's own axis, where a child split the other way counts as one cell however many panes
+are inside it:
 
 ```
-[a |0.8 [b |0.9 [c | d]]]   -->   four equal columns, ratios only
+[[a | b] |0.8 [c / d]]   -->   [[a | b] |0.67 [c / d]]
+
+                         three columns of equal width; c and d still share the
+                         last one, half its height each
 ```
 
-A tab that mixes both axes cannot be made even by any ratio at all, so `e` rebuilds it as a
-plain row (or column) and says *rebuilt as 4 equal columns* — that one flickers, the way the
-preset keys do:
+Only ratios change, so nothing moves and nothing flickers, and pressing `e` on a tab whose
+sizes are already even just says so. Drag a split around and `e` puts it back.
 
-```
-[[a | b] | [c / d]]   -->   [[a | b] | [c | d]]   four equal columns
-```
+That is also why `e` is safe on `main-horizontal` and `main-vertical`: a main pane against a
+stack is one cell either side, so `e` keeps the main pane's half of the tab rather than
+shrinking it to `1/n`. The one preset it does nudge is `tiled` with a short last row —
+`tiled` gives every pane an equal share of the *area*, while `e` gives the rows an equal
+share of the *height*.
 
-Pressing `e` on a tab that is already like that says *already 4 equal columns*. And because
-`even-horizontal` and `even-vertical` are exactly what `e` produces, `e` on those two presets
-has nothing to do — while on `main-horizontal` and `main-vertical` it shrinks the main pane
-from its half of the tab to `1/n`, which does undo what the preset was for.
-
-herdr clamps split ratios to `[0.1, 0.9]`, so a hand-built chain of ten or more columns
-cannot be evened out by ratios alone: there `e` says it did so *as far as herdr's ratio
-limits allow* rather than claiming an evenness it cannot deliver.
+herdr clamps split ratios to `[0.1, 0.9]`, so a hand-built run of more than ten columns
+cannot be evened out exactly: there `e` says it did so *as far as herdr's ratio limits
+allow* rather than claiming an evenness it cannot deliver.
 
 ## Tree mode
 
@@ -166,9 +162,8 @@ and the process.
 So a re-split or a preset — anything that changes the tab's shape rather than just its
 ratios — is done by parking panes in a scratch tab called `arrange:parking` and moving them
 back one at a time in the right order. herdr closes the scratch tab when its last pane
-leaves. That is the flicker, and it is why a rearrange takes a moment while a swap
-(`h/j/k/l`) is instant, and `e` is instant whenever it only has to change ratios: no
-restructuring, nothing to park.
+leaves. That is the flicker, and it is why a rearrange takes a moment while a swap (`h/j/k/l`)
+or `e` is instant: those two need no restructuring at all.
 
 If herdr is killed halfway through one of those plans, the panes are still alive, just in the
 wrong tab. Before parking anything the plugin writes what it is about to do to

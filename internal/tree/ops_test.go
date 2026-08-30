@@ -157,8 +157,9 @@ func TestReSplitNeverLosesAPane(t *testing.T) {
 	}
 }
 
-// shares returns each pane's fraction of the tab along dir. With every split
-// running that way, equal fractions is exactly what "the same size" means.
+// shares returns each pane's fraction of the tab along dir. A split the other
+// way does not divide anything along dir, so both its sides get the whole
+// fraction: what comes out is how wide (or tall) each pane's column is.
 func shares(n *Node, dir herdr.SplitDirection) map[string]float64 {
 	out := map[string]float64{}
 	var rec func(*Node, float64)
@@ -168,7 +169,6 @@ func shares(n *Node, dir herdr.SplitDirection) map[string]float64 {
 			return
 		}
 		if cur.Dir != dir {
-			// A split on the other axis does not divide anything along dir.
 			rec(cur.First, frac)
 			rec(cur.Second, frac)
 			return
@@ -180,158 +180,117 @@ func shares(n *Node, dir herdr.SplitDirection) map[string]float64 {
 	return out
 }
 
-// assertEqualPanes checks that every pane is the same size along dir.
-func assertEqualPanes(t *testing.T, n *Node, dir herdr.SplitDirection) {
+// assertShares checks each pane's room along dir against want, keyed by pane.
+func assertShares(t *testing.T, n *Node, dir herdr.SplitDirection, want map[string]float64) {
 	t.Helper()
-	if !SharesAxis(n, dir) {
-		t.Fatalf("%s does not run along %s, so its panes cannot be equal", n, dir)
-	}
-	want := 1 / float64(n.Count())
-	for pane, got := range shares(n, dir) {
-		if abs(got-want) > 0.001 {
-			t.Errorf("%s: pane %s has %.3f of the tab, want %.3f", n, pane, got, want)
+	got := shares(n, dir)
+	for pane, w := range want {
+		if abs(got[pane]-w) > 0.001 {
+			t.Errorf("%s: pane %s has %.3f of the tab along %s, want %.3f", n, pane, got[pane], dir, w)
 		}
 	}
 }
 
-func TestEvenResizesATabThatAlreadyRunsOneWay(t *testing.T) {
-	// Four columns, badly weighted. The shape is right, so only the ratios move
-	// and every pane ends up a quarter wide.
+func TestBalanceEvensOutARunOfCells(t *testing.T) {
+	// Four columns, badly weighted: every pane should end up a quarter wide, and
+	// the shape should not move at all.
 	n := Split(herdr.Right, 0.8,
 		Leaf("a"),
 		Split(herdr.Right, 0.9, Leaf("b"), Split(herdr.Right, 0.2, Leaf("c"), Leaf("d"))))
 
-	got, dir, reshaped := Even(n)
-	if reshaped {
-		t.Error("a tab that is already a row should not be rebuilt")
-	}
-	if dir != herdr.Right {
-		t.Errorf("dir = %s, want right", dir)
-	}
+	got := Balance(n)
 	if !SameShape(got, n) {
-		t.Fatalf("Even changed the shape: %s", got)
+		t.Fatalf("Balance changed the shape: %s", got)
 	}
-	assertEqualPanes(t, got, herdr.Right)
-	if !EvenIsExact(n) {
-		t.Error("four columns are evenable exactly")
+	assertShares(t, got, herdr.Right, map[string]float64{"a": 0.25, "b": 0.25, "c": 0.25, "d": 0.25})
+	if abs(got.Ratio-0.25) > 0.001 || abs(got.Second.Ratio-1.0/3.0) > 0.001 {
+		t.Errorf("ratios = %#v, want 0.25 then 0.333", got)
+	}
+	if !BalanceIsExact(n) {
+		t.Error("four columns balance exactly")
 	}
 }
 
-func TestEvenRebuildsATabThatMixesAxes(t *testing.T) {
-	// No ratio makes these four panes the same size: [[a | b] | [c / d]] gives
-	// each a quarter of the *area* but four different rectangles. Along the root
-	// axis, that is a row of four columns.
+func TestBalanceCountsASplitTheOtherWayAsOneCell(t *testing.T) {
+	// [[a | b] | [c / d]] is three columns, the last one split in two. Balancing
+	// gives the three columns a third of the width each — it does not flatten the
+	// stack, and it does not chase equal areas.
 	n := Split(herdr.Right, 0.5,
 		Split(herdr.Right, 0.5, Leaf("a"), Leaf("b")),
 		Split(herdr.Down, 0.5, Leaf("c"), Leaf("d")))
 
-	got, dir, reshaped := Even(n)
-	if !reshaped {
-		t.Error("a mixed tab has to be rebuilt to be made even")
-	}
-	if dir != herdr.Right {
-		t.Errorf("dir = %s, want right", dir)
-	}
-	assertEqualPanes(t, got, herdr.Right)
-	if !Equal(got, EvenHorizontal.Build(n.Leaves(), "")) {
-		t.Errorf("Even = %s, want what even-horizontal builds", got)
-	}
-	// A rebuild is always exact: it never needs a ratio herdr would clamp.
-	if !EvenIsExact(n) {
-		t.Error("a rebuild should be reported as exact")
-	}
-}
-
-func TestEvenTakesItsAxisFromTheRootSplit(t *testing.T) {
-	// The tab is stacked at the top level, so evening it out gives rows, not
-	// columns: `e` never turns a layout on its side.
-	n := Split(herdr.Down, 0.8, Leaf("a"), Split(herdr.Right, 0.5, Leaf("b"), Leaf("c")))
-
-	got, dir, reshaped := Even(n)
-	if dir != herdr.Down || !reshaped {
-		t.Fatalf("dir = %s, reshaped = %v, want a rebuild into rows", dir, reshaped)
-	}
-	assertEqualPanes(t, got, herdr.Down)
-
-	// One pane is even by definition, and has no axis to be even along.
-	if got, _, reshaped := Even(Leaf("only")); reshaped || got.String() != "only" {
-		t.Errorf("Even(only) = %s, reshaped = %v", got, reshaped)
-	}
-	if !EvenIsExact(Leaf("only")) {
-		t.Error("a single pane is trivially exact")
-	}
-}
-
-func TestEvenIsInexactOnALongChainItCannotReshape(t *testing.T) {
-	// Twelve columns need a 1/12 ratio at the root of the chain, which herdr
-	// clamps. Nothing here is out of axis, so Even cannot escape into a rebuild.
-	chain := Leaf("p0")
-	for i := 1; i < 12; i++ {
-		chain = r(Leaf(paneName(i)), chain)
-	}
-	if _, _, reshaped := Even(chain); reshaped {
-		t.Error("a chain of columns is already a row: it should not be rebuilt")
-	}
-	if EvenIsExact(chain) {
-		t.Error("a 12-pane chain cannot be evened out within herdr's clamp")
-	}
-}
-
-func TestSharesAxis(t *testing.T) {
-	row := Split(herdr.Right, 0.5, Leaf("a"), Split(herdr.Right, 0.5, Leaf("b"), Leaf("c")))
-	mixed := Split(herdr.Right, 0.5, Leaf("a"), Split(herdr.Down, 0.5, Leaf("b"), Leaf("c")))
-
-	if !SharesAxis(row, herdr.Right) || SharesAxis(row, herdr.Down) {
-		t.Error("a nested row runs right, and only right")
-	}
-	if SharesAxis(mixed, herdr.Right) || SharesAxis(mixed, herdr.Down) {
-		t.Error("a mixed tab runs along neither axis")
-	}
-	// A lone pane is a row and a column at once.
-	if !SharesAxis(Leaf("a"), herdr.Right) || !SharesAxis(Leaf("a"), herdr.Down) {
-		t.Error("a single pane should share every axis")
-	}
-}
-
-func TestEqualizeWeightsByLeafCount(t *testing.T) {
-	// One pane on the left, three stacked on the right: the left pane should get
-	// a quarter of the width.
-	n := Split(herdr.Right, 0.8, Leaf("a"), Split(herdr.Down, 0.9, Leaf("b"), Split(herdr.Down, 0.2, Leaf("c"), Leaf("e"))))
-	got := Equalize(n)
-
+	got := Balance(n)
 	if !SameShape(got, n) {
-		t.Fatalf("Equalize changed the shape: %s", got)
+		t.Fatalf("Balance changed the shape: %s", got)
 	}
-	if abs(got.Ratio-0.25) > 0.001 {
-		t.Errorf("root ratio = %.3f, want 0.25", got.Ratio)
+	if abs(got.Ratio-2.0/3.0) > 0.001 {
+		t.Errorf("root ratio = %.3f, want 0.667", got.Ratio)
 	}
-	if abs(got.Second.Ratio-1.0/3.0) > 0.001 {
-		t.Errorf("right stack ratio = %.3f, want 0.333", got.Second.Ratio)
-	}
-	if abs(got.Second.Second.Ratio-0.5) > 0.001 {
-		t.Errorf("inner ratio = %.3f, want 0.5", got.Second.Second.Ratio)
-	}
-	if !EqualizeIsExact(n) {
-		t.Error("this tree is equalizable exactly")
+	assertShares(t, got, herdr.Right, map[string]float64{"a": 1.0 / 3, "b": 1.0 / 3, "c": 1.0 / 3, "d": 1.0 / 3})
+	// c and d share that column, so they keep half its height each.
+	assertShares(t, got, herdr.Down, map[string]float64{"a": 1, "b": 1, "c": 0.5, "d": 0.5})
+}
+
+func TestBalanceLeavesTheMainPresetsAlone(t *testing.T) {
+	// The main-* presets are a main pane against everything else: one cell each
+	// way, so balancing keeps the main pane's half rather than shrinking it to
+	// 1/n. That is what makes `e` safe to press on any layout.
+	for _, preset := range []Preset{MainHorizontal, MainVertical, EvenHorizontal, EvenVertical} {
+		for n := 1; n <= 9; n++ {
+			built := preset.Build(panes(n), "p0")
+			if got := Balance(built); !Equal(got, built) {
+				t.Errorf("%s n=%d: Balance changed it to %#v", preset.Name(), n, got)
+			}
+		}
 	}
 }
 
-func TestEqualizeIsInexactOutsideTheClamp(t *testing.T) {
-	// A right-nested chain of twelve panes needs a 1/12 ratio at the root, which
-	// herdr will clamp to 0.1. The UI says so rather than silently lying.
+func TestBalanceIsInexactOutsideTheClamp(t *testing.T) {
+	// A chain of twelve columns needs a 1/12 ratio at its root, which herdr
+	// clamps to 0.1. The UI says so rather than silently lying.
 	chain := Leaf("p0")
 	for i := 1; i < 12; i++ {
 		chain = r(Leaf(paneName(i)), chain)
 	}
-	if EqualizeIsExact(chain) {
-		t.Error("a 12-pane chain cannot be equalized within herdr's clamp")
+	if BalanceIsExact(chain) {
+		t.Error("a 12-pane chain cannot be balanced within herdr's clamp")
 	}
-	got := Equalize(chain)
-	if got.Ratio != MinRatio {
+	if got := Balance(chain); got.Ratio != MinRatio {
 		t.Errorf("root ratio = %v, want the clamp %v", got.Ratio, MinRatio)
 	}
-	if !EqualizeIsExact(Leaf("only")) {
+
+	// The same twelve panes stacked the other way at each step are one cell per
+	// split, so they balance exactly.
+	zigzag := Leaf("p0")
+	for i := 1; i < 12; i++ {
+		if i%2 == 0 {
+			zigzag = r(Leaf(paneName(i)), zigzag)
+		} else {
+			zigzag = d(Leaf(paneName(i)), zigzag)
+		}
+	}
+	if !BalanceIsExact(zigzag) {
+		t.Error("alternating splits are one cell each side, so they balance exactly")
+	}
+	if !BalanceIsExact(Leaf("only")) {
 		t.Error("a single pane is trivially exact")
+	}
+}
+
+func TestCellsCountsRunsAlongOneAxis(t *testing.T) {
+	n := Split(herdr.Right, 0.5,
+		Split(herdr.Right, 0.5, Leaf("a"), Leaf("b")),
+		Split(herdr.Down, 0.5, Leaf("c"), Leaf("d")))
+
+	if got := cells(n, herdr.Right); got != 3 {
+		t.Errorf("cells along right = %d, want 3", got)
+	}
+	// Along the other axis the whole tab is a single cell.
+	if got := cells(n, herdr.Down); got != 1 {
+		t.Errorf("cells along down = %d, want 1", got)
+	}
+	if got := cells(Leaf("a"), herdr.Right); got != 1 {
+		t.Errorf("a pane is %d cells, want 1", got)
 	}
 }
 

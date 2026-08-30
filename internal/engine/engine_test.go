@@ -140,68 +140,60 @@ func TestReSplitAtTheTabEdgeChangesNothing(t *testing.T) {
 	}
 }
 
-func TestEvenResizesATabThatIsAlreadyOneAxis(t *testing.T) {
-	// A row of columns is already the right shape, so evening it out is ratios
-	// only: no pane.move, which is what keeps it free of flicker.
+func TestBalanceOnlyResizes(t *testing.T) {
+	// Balancing needs no pane moves, so `e` must never touch pane.move: that is
+	// what keeps it free of flicker, whatever shape the tab is in.
 	fake, eng, _ := setup(t, tree.Split(herdr.Right, 0.8, leaf("p1"),
 		tree.Split(herdr.Right, 0.9, leaf("p2"), leaf("p3"))), "p1")
 
-	res, err := eng.Even(context.Background())
+	exact, err := eng.Balance(context.Background())
 	if err != nil {
-		t.Fatalf("Even: %v", err)
+		t.Fatalf("Balance: %v", err)
 	}
-	if res.Reshaped || !res.Exact || res.Dir != herdr.Right || res.Panes != 3 {
-		t.Errorf("result = %#v, want three exact columns without a reshape", res)
+	if !exact {
+		t.Error("three columns balance exactly")
 	}
 	for _, call := range fake.calls {
 		if strings.HasPrefix(call, "move ") {
-			t.Errorf("Even moved a pane: %s", call)
+			t.Errorf("Balance moved a pane: %s", call)
 		}
 	}
-	// A third each: the root splits one pane off from two.
+	// A third each: the root splits one column off from two.
 	got := fake.treeOf(eng.TabID())
 	if abs(got.Ratio-1.0/3.0) > 0.01 || abs(got.Second.Ratio-0.5) > 0.01 {
 		t.Errorf("ratios = %#v", got)
 	}
 }
 
-func TestEvenRebuildsATabThatMixesAxes(t *testing.T) {
-	// No set of ratios makes the panes of [p1 | [p2 / p3]] the same size, so this
-	// is the case where `e` rebuilds the tab as a plain row — and says so.
+func TestBalanceKeepsTheLayout(t *testing.T) {
+	// [p1 | [p2 / p3]] is two columns, the second one split in two. Balancing
+	// evens out those two columns and leaves the stack standing: the layout is
+	// the user's, only the sizes are ours.
 	fake, eng, _ := setup(t, tree.Split(herdr.Right, 0.8, leaf("p1"),
 		tree.Split(herdr.Down, 0.9, leaf("p2"), leaf("p3"))), "p1")
 
-	res, err := eng.Even(context.Background())
-	if err != nil {
-		t.Fatalf("Even: %v", err)
-	}
-	if !res.Reshaped || !res.Exact || res.Dir != herdr.Right || res.Panes != 3 {
-		t.Errorf("result = %#v, want three exact columns via a reshape", res)
+	if _, err := eng.Balance(context.Background()); err != nil {
+		t.Fatalf("Balance: %v", err)
 	}
 	got := fake.treeOf(eng.TabID())
-	if got.String() != "[p1 | [p2 | p3]]" {
-		t.Fatalf("tab = %s, want three columns\ncalls:\n%s", got, fake.callLog())
+	if got.String() != "[p1 | [p2 / p3]]" {
+		t.Fatalf("tab = %s, want the shape it started with\ncalls:\n%s", got, fake.callLog())
 	}
-	if abs(got.Ratio-1.0/3.0) > 0.01 || abs(got.Second.Ratio-0.5) > 0.01 {
-		t.Errorf("ratios = %#v", got)
+	if abs(got.Ratio-0.5) > 0.01 || abs(got.Second.Ratio-0.5) > 0.01 {
+		t.Errorf("ratios = %#v, want halves both ways", got)
 	}
-	if len(fake.liveTabs()) != 1 {
-		t.Errorf("the scratch tab was not cleaned up: %v", fake.liveTabs())
+	for _, call := range fake.calls {
+		if strings.HasPrefix(call, "move ") {
+			t.Errorf("Balance moved a pane: %s", call)
+		}
 	}
 }
 
-func TestEvenOfAColumnStaysAColumn(t *testing.T) {
-	// The axis comes from the root split, so a stack of rows evens out as rows
-	// rather than being turned on its side.
-	_, eng, _ := setup(t, tree.Split(herdr.Down, 0.8, leaf("p1"),
-		tree.Split(herdr.Right, 0.5, leaf("p2"), leaf("p3"))), "p1")
+func TestBalanceOfABalancedTabChangesNothing(t *testing.T) {
+	_, eng, _ := setup(t, tree.EvenVertical.Build([]string{"p1", "p2", "p3", "p4"}, "p1"), "p1")
 
-	res, err := eng.Even(context.Background())
-	if err != nil {
-		t.Fatalf("Even: %v", err)
-	}
-	if res.Dir != herdr.Down || !res.Reshaped {
-		t.Errorf("result = %#v, want a reshape into rows", res)
+	if _, err := eng.Balance(context.Background()); !errors.Is(err, tree.ErrNoChange) {
+		t.Errorf("err = %v, want ErrNoChange", err)
 	}
 }
 

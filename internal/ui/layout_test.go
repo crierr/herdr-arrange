@@ -96,10 +96,9 @@ func TestPresetAlreadyAppliedFlashes(t *testing.T) {
 	}
 }
 
-// TestEvenOnOneAxisOnlySetsRatios is the point of having a separate key for it:
-// on a tab that is already a row, `e` must never move a pane, because moving
-// panes is what flickers.
-func TestEvenOnOneAxisOnlySetsRatios(t *testing.T) {
+// TestBalanceOnlySetsRatios is the point of having a separate key for it: it
+// must never move a pane, because moving panes is what flickers.
+func TestBalanceOnlySetsRatios(t *testing.T) {
 	lopsided := tree.Split(herdr.Right, 0.8,
 		tree.Split(herdr.Right, 0.5, tree.Leaf("w1S:p1"), tree.Leaf(curPane)),
 		tree.Split(herdr.Right, 0.5, tree.Leaf("w1S:p3"), tree.Leaf("w1S:p4")),
@@ -111,45 +110,46 @@ func TestEvenOnOneAxisOnlySetsRatios(t *testing.T) {
 		t.Fatalf("the root ratio was not evened out; calls were: %s", f.log())
 	}
 	if f.took("move") || f.took("swap") {
-		t.Fatalf("even moved a pane: %s", f.log())
+		t.Fatalf("balancing moved a pane: %s", f.log())
 	}
-	if m.status != "evened out to 4 equal columns" {
+	if m.status != "pane sizes evened out" {
 		t.Errorf("status is %q", m.status)
 	}
 }
 
-// TestEvenOnAMixedShapeRebuildsIt: no ratio makes the panes of [[a | b] | [c / d]]
-// the same size, so `e` there is a rebuild into a plain row — and the status line
-// says "rebuilt", because panes moving and the tab flickering wants explaining.
-func TestEvenOnAMixedShapeRebuildsIt(t *testing.T) {
-	mixed := tree.Split(herdr.Right, 0.5,
-		tree.Split(herdr.Right, 0.5, tree.Leaf("w1S:p1"), tree.Leaf(curPane)),
-		tree.Split(herdr.Down, 0.5, tree.Leaf("w1S:p3"), tree.Leaf("w1S:p4")),
+// TestBalanceLeavesTheLayoutAlone is the report that prompted this: `e` is meant
+// to even out the sizes of the layout the user built, not to replace it with an
+// even-* preset. Here two columns, the second split in two, keep their shape and
+// end up half the tab each.
+func TestBalanceLeavesTheLayoutAlone(t *testing.T) {
+	mixed := tree.Split(herdr.Right, 0.8,
+		tree.Leaf(curPane),
+		tree.Split(herdr.Down, 0.2, tree.Leaf("w1S:p3"), tree.Leaf("w1S:p4")),
 	)
 	f := newFakeClient(mixed)
 	m := press(t, start(t, f, ModeLayout), "e")
 
-	if m.statusKind == statusFail {
-		t.Fatalf("status is %v %q; calls were: %s", m.statusKind, m.status, f.log())
+	if f.took("move") || f.took("swap") {
+		t.Fatalf("the layout was rearranged: %s", f.log())
 	}
-	if m.status != "rebuilt as 4 equal columns" {
+	if !f.took("ratio w1S:t1 [] = 0.50") || !f.took("ratio w1S:t1 [true] = 0.50") {
+		t.Fatalf("the splits were not evened out; calls were: %s", f.log())
+	}
+	if m.status != "pane sizes evened out" {
 		t.Errorf("status is %q", m.status)
-	}
-	if !f.took("move") {
-		t.Errorf("the mixed tab was not rebuilt: %s", f.log())
 	}
 }
 
-// TestEvenOnAnAlreadyEvenTabFlashes: pressing `e` twice must read as "it is
+// TestBalanceOnAnAlreadyEvenTabFlashes: pressing `e` twice must read as "it is
 // already like that", not as a broken key.
-func TestEvenOnAnAlreadyEvenTabFlashes(t *testing.T) {
-	f := newFakeClient(evenFour()) // four equal columns already
+func TestBalanceOnAnAlreadyEvenTabFlashes(t *testing.T) {
+	f := newFakeClient(evenFour())
 	m := press(t, start(t, f, ModeLayout), "e")
 
 	if m.statusKind != statusFlash {
 		t.Fatalf("status kind is %v (%q), want a flash", m.statusKind, m.status)
 	}
-	if m.status != "already 4 equal columns" {
+	if m.status != "the pane sizes are already even" {
 		t.Errorf("status is %q", m.status)
 	}
 	if f.took("ratio") || f.took("move") || f.took("swap") {

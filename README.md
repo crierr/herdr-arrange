@@ -160,6 +160,10 @@ rows at the bottom — all of them at any fold level. The selected row says exac
 | a pane in another tab | move this pane next to that one, then arrange it there |
 | the pane you are moving | back to layout mode |
 
+A pane arriving in a tab lands to the *right* of the pane it was sent to, since a terminal
+has width to spare where half its height often will not hold a usable pane. Layout mode is
+opened on the destination afterwards, so `H/J/K/L` or a preset can put it somewhere else.
+
 A pane in another tab is offered as somewhere to *land*, not as a swap, because herdr's
 `pane.swap` cannot cross a tab boundary — and a swap that killed a terminal to fake it
 would be worse than being told what will actually happen.

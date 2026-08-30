@@ -209,14 +209,17 @@ func (e *Engine) MoveToNewWorkspace(ctx context.Context) error {
 	return e.moveSelf(ctx, herdr.DestNewWorkspace("", ""))
 }
 
-// MoveToTab moves the pane into an existing tab, splitting its active pane
-// downwards.
+// MoveToTab moves the pane into an existing tab, beside its active pane.
 func (e *Engine) MoveToTab(ctx context.Context, tabID string) error {
 	return e.MoveToTabBeside(ctx, tabID, "")
 }
 
 // MoveToTabBeside moves the pane into an existing tab, splitting a named pane of
-// that tab downwards. An empty targetPaneID lets herdr pick the tab's active pane.
+// that tab to the right. An empty targetPaneID lets herdr pick the tab's active pane.
+//
+// Right rather than down because a terminal is wider than it is tall: half the width
+// still holds a usable pane, while half the height often does not, and a pane arriving
+// beside its host reads as landing next to it rather than under it.
 //
 // This is how the tree view offers panes in other tabs as destinations: pane.swap
 // cannot cross a tab boundary, so landing next to the chosen pane is the closest
@@ -225,7 +228,7 @@ func (e *Engine) MoveToTabBeside(ctx context.Context, tabID, targetPaneID string
 	if tabID == e.tabID {
 		return tree.ErrNoChange
 	}
-	return e.moveSelf(ctx, herdr.DestTab(tabID, targetPaneID, herdr.Down, nil))
+	return e.moveSelf(ctx, herdr.DestTab(tabID, targetPaneID, herdr.Right, nil))
 }
 
 // SwapWithPane exchanges the pane with a named pane. Both must be in the same

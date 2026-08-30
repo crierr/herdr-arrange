@@ -305,8 +305,9 @@ func TestMoveToTabMovesAcrossWorkspaces(t *testing.T) {
 	if eng.WorkspaceID() != "w2" {
 		t.Errorf("workspace = %s, want w2", eng.WorkspaceID())
 	}
-	if got := fake.treeOf("w2:t2").String(); got != "[q1 / p2]" {
-		t.Errorf("destination tab = %s, want [q1 / p2]", got)
+	// Beside the tab's pane, not under it: a terminal has width to spare.
+	if got := fake.treeOf("w2:t2").String(); got != "[q1 | p2]" {
+		t.Errorf("destination tab = %s, want [q1 | p2]", got)
 	}
 }
 

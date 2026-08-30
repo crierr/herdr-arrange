@@ -453,7 +453,9 @@ and scrolled in a `bubbles/viewport`.
   After a **pane swap** action → exit (per spec). After **enter on the current pane** →
   layout mode if the tab has >1 pane, else no-op.
 
-Cross-workspace tab moves are `pane.move {destination:{type:"tab", tab_id, split:"down"}}`;
+Moves into a tab are `pane.move {destination:{type:"tab", tab_id, split:"right"}}` — the
+pane lands *beside* the tab's pane, because a terminal has width to spare and half its
+height often does not hold a usable pane;
 "new tab in workspace X" is `pane.move {destination:{type:"new_tab", workspace_id:X}}`
 (one call — no separate `tab.create` needed, and it auto-closes an emptied source tab).
 

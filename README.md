@@ -8,29 +8,10 @@ Two views. **Layout mode** rearranges the panes of the current tab; **tree mode*
 pane you are on to another tab or workspace. Everything moves live behind the popup, and
 nothing is respawned: pane ids, terminals, scrollback and running agents all survive.
 
-```
- ┌───────────────┬──────────┐
- │               │          │
- │    w1S:p2     │          │
- │    202x84     ├──────────┤
- │               │          │
- │               ├──────────┤
- └───────────────┴──────────┘
+<img src="docs/layout-mode.png" alt="Layout mode: a map of the tab above the key help, with the current pane named and measured inside its box" width="560">
 
- h/j/k/l  ←↓↑→            swap pane
- H/J/K/L  shift+←↓↑→      re-split pane
- ctrl+h/j/k/l  ctrl+←↓↑→  resize pane
- 1 even-horizontal   2 even-vertical     3 main-horizontal
- 4 main-vertical     5 tiled             space cycle presets
- e             even out pane sizes
- c             move pane to a new tab in this workspace
- N             move pane to a new workspace
- t             move/swap to another workspace/tab
- enter / esc   close
-────────────────────────────────────────────────────────────
- w1S:t1 · 4 panes · main-vertical · this pane: p2
- applied main-vertical
-```
+*Layout mode, on a three-pane tab: the map says the pane you are on is `w23:p3` at
+168x84, and the highlighted preset is the one the tab already matches.*
 
 ## Install
 
@@ -138,24 +119,11 @@ allow* rather than claiming an evenness it cannot deliver.
 `prefix+M` opens straight here, and so does `prefix+m` on a tab with only one pane — there
 is no layout to arrange there, but the pane can still go somewhere.
 
-```
-  [1] w1S  herdr-arrange
-   ├─ t1  main  4 panes
-   │  ├─ p1
-   │  ├─ p2  claude  (current)
- ▸ │  ├─ p3  ← swap this pane with p3
-   │  └─ p4
-   ├─ t2  logs  1 pane
-   │  └─ p7  tail
-   └─ [c] new tab in this workspace
-  [2] wJ  notes
-   └─ t1  1 pane
-      └─ p1
-  [N] new workspace
-────────────────────────────────────────────────────────────
- j/k move  h/l fold  enter apply  t layout  esc close
- c new tab here  1-9 workspace  N new workspace
-```
+<img src="docs/tree-mode.png" alt="Tree mode: the session's workspaces and tabs, with the selected row annotated with what enter would do" width="520">
+
+*Tree mode at its default fold level — every workspace and tab in the session, with the
+selected row saying what `enter` would do to it. The room below the tree is held for the
+panes level, so `l` never resizes the popup.*
 
 The popup is as tall as the session needs, so the whole tree is usually on screen at
 once; past that — or on a short terminal — it scrolls.

@@ -7,8 +7,17 @@ pane you are on to another tab or workspace. Everything moves live behind the po
 nothing is respawned: pane ids, terminals, scrollback and running agents all survive.
 
 ```
- h/j/k/l  ←↓↑→         swap pane
- H/J/K/L  shift+←↓↑→   re-split pane
+ ┌───────────────┬──────────┐
+ │               │          │
+ │    w1S:p2     │          │
+ │    202x84     ├──────────┤
+ │               │          │
+ │               ├──────────┤
+ └───────────────┴──────────┘
+
+ h/j/k/l  ←↓↑→            swap pane
+ H/J/K/L  shift+←↓↑→      re-split pane
+ ctrl+h/j/k/l  ctrl+←↓↑→  resize pane
  1 even-horizontal   2 even-vertical     3 main-horizontal
  4 main-vertical     5 tiled             space cycle presets
  e             even out pane sizes
@@ -70,6 +79,7 @@ Opens on the tab you are in, with the pane you are on as the one being arranged.
 |---|---|
 | `h` `j` `k` `l`, arrows | swap this pane with its neighbour that way |
 | `H` `J` `K` `L`, shift+arrows | re-split: detach this pane and re-attach it along that edge |
+| ctrl+`h` `j` `k` `l`, ctrl+arrows | move the boundary that way, growing or shrinking this pane |
 | `1`–`5` | apply a layout preset, with **this** pane as the main one |
 | `space` | apply the next preset after the one the tab already matches |
 | `e` | even out the pane sizes, without changing the layout |
@@ -78,9 +88,19 @@ Opens on the tab you are in, with the pane you are on as the one being arranged.
 | `t` | switch to tree mode |
 | `enter`, `esc`, `q` | close |
 
+The map at the top is the tab as it is now, one box per pane, with the pane being arranged
+named and measured inside its own. Its shape is the tab's: a wide tab draws wide. The
+numbers are herdr's own, so what the map says a pane is is what it is.
+
 The status line names the layout the tab currently matches — relative to the pane being
 arranged, so it is always the one the matching number key would reproduce. `custom` means
 no preset matches.
+
+ctrl+`hjkl` resizes the way tmux's `resize-pane` does: **the boundary goes the way you
+press**. So ctrl+`l` widens a pane that has something to its right and narrows one that has
+something to its left — either way, the line you were pointing at is the line that moves.
+The split herdr moves is the nearest one on that axis, and it stops at herdr's own ratio
+limits, which the popup reports rather than pretending it moved.
 
 `H/J/K/L` walk outwards. Pressing `H` on `[A | [P / B]]` gives `[A | [P | B]]`; pressing it
 again gives `[P | [A | B]]`, and once the pane owns a whole tab edge, further presses that

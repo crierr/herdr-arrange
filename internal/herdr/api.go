@@ -45,6 +45,46 @@ func (c *Client) ExportLayoutForPane(ctx context.Context, paneID string) (*Layou
 	return &out.Layout, nil
 }
 
+// PaneLayout returns the geometry of the tab a pane lives in: the area it is drawn
+// in and where each of its panes sits. An empty paneID means the focused tab.
+//
+// layout.export says how a tab is divided; this says what that comes to in cells,
+// which is the only way to draw a picture of it or to report a pane's size.
+func (c *Client) PaneLayout(ctx context.Context, paneID string) (*LayoutSnapshot, error) {
+	params := map[string]any{}
+	if paneID != "" {
+		params["pane_id"] = paneID
+	}
+	var out struct {
+		Layout LayoutSnapshot `json:"layout"`
+	}
+	if err := c.Call(ctx, "pane.layout", params, &out); err != nil {
+		return nil, err
+	}
+	return &out.Layout, nil
+}
+
+// ResizePane moves the split nearest to a pane in a direction, the way tmux's
+// resize-pane does: the boundary goes the way you asked, so the pane grows if the
+// split is on that side of it and shrinks if it is on the other.
+//
+// amount is a fraction of the split's own axis; zero lets herdr pick its default
+// step. It reports Changed false when there is no split to move or the ratio is
+// already clamped.
+func (c *Client) ResizePane(ctx context.Context, paneID string, dir Direction, amount float64) (*ResizeResult, error) {
+	var out struct {
+		Resize ResizeResult `json:"resize"`
+	}
+	params := map[string]any{"pane_id": paneID, "direction": string(dir)}
+	if amount != 0 {
+		params["amount"] = amount
+	}
+	if err := c.Call(ctx, "pane.resize", params, &out); err != nil {
+		return nil, err
+	}
+	return &out.Resize, nil
+}
+
 // SetSplitRatio sets the ratio of one split, addressed by a path of booleans
 // from the root (false = first child, true = second).
 //

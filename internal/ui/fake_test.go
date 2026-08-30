@@ -33,10 +33,14 @@ type fakeClient struct {
 	calls    []string
 
 	// swapRefused makes pane.swap report changed:false, the way herdr does when
-	// there is no neighbour in that direction.
-	swapRefused bool
+	// there is no neighbour in that direction. resizeRefused is the same for
+	// pane.resize, which herdr refuses when the ratio is already at its clamp.
+	swapRefused   bool
+	resizeRefused bool
 	// exportErr is returned by every layout.export, for testing a vanished pane.
 	exportErr error
+	// geoErr fails pane.layout alone, which costs the minimap and nothing else.
+	geoErr error
 	// opErr fails the next mutating call.
 	opErr error
 
@@ -92,6 +96,58 @@ func (f *fakeClient) ExportLayoutForPane(_ context.Context, paneID string) (*her
 func (f *fakeClient) Snapshot(_ context.Context) (*herdr.SessionSnapshot, error) {
 	f.record("snapshot")
 	return f.snapshot, nil
+}
+
+// fakeArea is the screen the fixture tab is drawn in, and the one the minimap is
+// therefore a picture of: four columns of 84 rows fit it exactly.
+var fakeArea = herdr.LayoutRect{X: 8, Y: 1, Width: 336, Height: 84}
+
+func (f *fakeClient) PaneLayout(_ context.Context, paneID string) (*herdr.LayoutSnapshot, error) {
+	f.record("layout %s", paneID)
+	if f.exportErr != nil {
+		return nil, f.exportErr
+	}
+	if f.geoErr != nil {
+		return nil, f.geoErr
+	}
+	snap := &herdr.LayoutSnapshot{
+		WorkspaceID: f.layout.WorkspaceID, TabID: f.layout.TabID,
+		Area: fakeArea, FocusedPaneID: f.layout.FocusedPaneID,
+	}
+	snap.Panes = paneRects(tree.FromLayout(&f.layout.Root), fakeArea, f.arranged, nil)
+	return snap, nil
+}
+
+// paneRects lays a tree out in an area the way herdr's own split_rect does: the
+// first child is rounded to size and the second gets what is left, so the panes tile
+// the area exactly however the ratios fall.
+func paneRects(n *tree.Node, area herdr.LayoutRect, focused string, out []herdr.LayoutPane) []herdr.LayoutPane {
+	if n == nil {
+		return out
+	}
+	if n.IsLeaf() {
+		return append(out, herdr.LayoutPane{PaneID: n.PaneID, Focused: n.PaneID == focused, Rect: area})
+	}
+	first, second := area, area
+	if n.Dir == herdr.Right {
+		first.Width = int(float64(area.Width)*n.Ratio + 0.5)
+		second.X, second.Width = area.X+first.Width, area.Width-first.Width
+	} else {
+		first.Height = int(float64(area.Height)*n.Ratio + 0.5)
+		second.Y, second.Height = area.Y+first.Height, area.Height-first.Height
+	}
+	return paneRects(n.Second, second, focused, paneRects(n.First, first, focused, out))
+}
+
+func (f *fakeClient) ResizePane(_ context.Context, paneID string, dir herdr.Direction, amount float64) (*herdr.ResizeResult, error) {
+	f.record("resize %s %s %.2f", paneID, dir, amount)
+	if err := f.fail(); err != nil {
+		return nil, err
+	}
+	if f.resizeRefused {
+		return &herdr.ResizeResult{PaneID: paneID, Reason: "unchanged"}, nil
+	}
+	return &herdr.ResizeResult{Changed: true, PaneID: paneID, FocusedPaneID: paneID}, nil
 }
 
 func (f *fakeClient) SwapDirection(_ context.Context, paneID string, dir herdr.Direction) (*herdr.SwapResult, error) {
@@ -224,8 +280,8 @@ func fixtureSnapshot(panes []string) *herdr.SessionSnapshot {
 	// herdr reports the area it draws each tab in, which is also the room a popup
 	// has: an ordinary terminal, so the tree is sized by its own height here.
 	for _, tab := range s.Tabs {
-		s.Layouts = append(s.Layouts, herdr.TabLayout{
-			TabID: tab.TabID, Area: herdr.TabArea{Width: 200, Height: 50},
+		s.Layouts = append(s.Layouts, herdr.LayoutSnapshot{
+			TabID: tab.TabID, Area: herdr.LayoutRect{Width: 200, Height: 50},
 		})
 	}
 	return s
@@ -327,6 +383,10 @@ func key(t *testing.T, name string) tea.KeyMsg {
 		"home": tea.KeyHome, "end": tea.KeyEnd,
 		"pgup": tea.KeyPgUp, "pgdown": tea.KeyPgDown,
 		"ctrl+c": tea.KeyCtrlC, "ctrl+d": tea.KeyCtrlD, "ctrl+u": tea.KeyCtrlU,
+		"ctrl+h": tea.KeyCtrlH, "ctrl+j": tea.KeyCtrlJ,
+		"ctrl+k": tea.KeyCtrlK, "ctrl+l": tea.KeyCtrlL,
+		"ctrl+up": tea.KeyCtrlUp, "ctrl+down": tea.KeyCtrlDown,
+		"ctrl+left": tea.KeyCtrlLeft, "ctrl+right": tea.KeyCtrlRight,
 	}
 
 	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(name)}

@@ -106,7 +106,7 @@ func TestTreePopupSizeFollowsTheScreen(t *testing.T) {
 	big := hugeSession()
 
 	for _, screen := range []int{24, 50, 90} {
-		big.Layouts = []herdr.TabLayout{{TabID: curTab, Area: herdr.TabArea{Width: 200, Height: screen}}}
+		big.Layouts = []herdr.LayoutSnapshot{{TabID: curTab, Area: herdr.LayoutRect{Width: 200, Height: screen}}}
 		_, height := TreePopupSize(big, curPane, curTab, curWS)
 
 		_, floor := LayoutPopupSize()
@@ -168,7 +168,8 @@ func TestSwitchingViewsReopensThePopupForTheOtherSize(t *testing.T) {
 		want Mode
 	}{{ModeLayout, ModeTree}, {ModeTree, ModeLayout}} {
 		t.Run(modeWord(c.want), func(t *testing.T) {
-			f := newFakeClient(evenFour()) // the fixture tree is taller than the layout panel
+			f := newFakeClient(evenFour())
+			f.snapshot = hugeSession() // a tree far taller than the layout panel
 			m := press(t, popupSized(t, f, c.from), "t")
 
 			if m.reopen == nil {
@@ -229,6 +230,7 @@ func TestAHandRunUINeverReopens(t *testing.T) {
 // with it.
 func TestAReopenCarriesTheResultOver(t *testing.T) {
 	f := newFakeClient(evenFour())
+	f.snapshot = hugeSession()                     // so tree mode is in a popup layout mode cannot use
 	m := press(t, popupSized(t, f, ModeTree), "c") // move to a new tab, then arrange it
 
 	if !f.took("move w1S:p2 -> new_tab") {

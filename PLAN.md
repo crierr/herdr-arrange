@@ -44,6 +44,8 @@ I probed the live 0.8.2 server and read the relevant handlers. Findings:
 | read tree | `layout.export` | BSP tree: `{type:"split",direction:"right"\|"down",ratio,first,second}` / `{type:"pane",pane_id,label,cwd,command}` |
 | read everything | `session.snapshot` | workspaces + tabs + panes + per-tab layouts (rects/splits) in **one** call — the whole tree view from one request |
 | h/j/k/l swap | `pane.swap` | same-tab only; preserves shape, ratios, pane ids, **processes**. Response `focused_pane_id` = source pane, i.e. focus follows the pane. |
+| read geometry | `pane.layout` | `{layout:{area, focused_pane_id, panes:[{pane_id, focused, rect}], splits}}` for a pane's tab — the pane rects **tile the area exactly**, so they can be drawn as shared borders. The only source of a pane's size in cells. |
+| resize | `pane.resize` | `{pane_id, direction, amount?}` → `{changed, reason:"unchanged"?, layout}`. Moves the nearest same-axis split *toward the direction pressed* (tmux `resize-pane`); default step 0.05; same [0.1, 0.9] clamp. |
 | set ratios | `layout.set_split_ratio` | `{tab_id, path:[bool], ratio}`, `false`=first / `true`=second. **Ratio is clamped to [0.1, 0.9]** (`Layout::set_ratio_at`). |
 | move across tabs | `pane.move` | `destination: {type:"tab", tab_id, target_pane_id, split:"right"\|"down", ratio}`. Preserves pane id, terminal id and pid. |
 | new tab / workspace | `pane.move` | `destination: {type:"new_tab"\|"new_workspace"}`; auto-closes the source tab when the last pane leaves (`closed_tab_id` in the response). |
@@ -251,8 +253,17 @@ description = "move pane to…"
 ## 4. Layout mode
 
 ```
- h/j/k/l  ←↓↑→        swap pane
- H/J/K/L  shift+←↓↑→  re-split pane
+ ┌───────────────┬──────────┐
+ │               │          │
+ │    w1S:p2     │          │
+ │    202x84     ├──────────┤
+ │               │          │
+ │               ├──────────┤
+ └───────────────┴──────────┘
+
+ h/j/k/l  ←↓↑→            swap pane
+ H/J/K/L  shift+←↓↑→      re-split pane
+ ctrl+h/j/k/l  ctrl+←↓↑→  resize pane
  1 even-horizontal   2 even-vertical   3 main-horizontal
  4 main-vertical     5 tiled           space cycle presets
  e  even out pane sizes
@@ -263,6 +274,22 @@ description = "move pane to…"
 ─────────────────────────────────────────────────
  w1S:t1 · 4 panes · main-vertical · this pane: p2
 ```
+
+The **minimap** is drawn from `pane.layout` (`{area, panes:[{pane_id, rect}]}`), not from
+the split tree: the tree says how the tab is divided, only the rects say what that comes to
+in cells, which is both what a picture needs and the only source for the pane's size.
+
+- Panes tile the area exactly, so *coordinates* are scaled rather than sizes — two panes
+  sharing a border on screen then share a line on the map. Rounding can squash a pane flat;
+  it can never open a gap or make two panes overlap.
+- Boxes are accumulated as a per-cell edge bitmask and only then turned into runes, so a
+  junction comes out `├`/`┬`/`┼` whatever order the panes arrive in.
+- Height is **fixed** (7 rows + a blank line): the action has to size the popup before it
+  knows anything about the tab, and herdr cannot resize a popup. Width follows the tab's
+  aspect ratio — map cells and screen cells are the same shape — clamped to 12…56.
+- The geometry is a second call, kept out of `engine.Tab` so mutations do not pay for it,
+  and its failure is reported in the map's own space (`no map: …`) rather than in the status
+  line, which would otherwise lose the last action's result on every reload.
 
 Behaviour per key:
 
@@ -276,6 +303,12 @@ Behaviour per key:
   ```
   Repeated presses walk P up one level at a time; at the root it becomes a full tab edge.
   If P is already the whole-tab-edge child in that direction, no-op with a status flash.
+- **ctrl+`h/j/k/l` / ctrl+arrows** → one `pane.resize {pane_id, direction}`, letting herdr
+  pick the step (0.05). tmux's `resize-pane` semantics, which herdr already implements
+  (`layout.rs:resize_focused`): the nearest split on that axis moves *the way you pressed*,
+  so ctrl+`l` widens a pane with something to its right and narrows one with something to
+  its left. Pure `set_ratio_at` behind the scenes — no pane moves, no flicker. `changed:false`
+  (no split that way, or the [0.1, 0.9] clamp) flashes rather than errors.
 - **`1`–`5`** → build the preset tree over the tab's current panes, then reconcile.
 - **`space`** → structurally match the current tree against all five presets and apply the
   next one (stateless; falls back to `1` when nothing matches). The status line names the
@@ -296,7 +329,8 @@ Behaviour per key:
 - **`t`** → tree-view mode.
 - **`enter`/`esc`** → exit 0; herdr tears the popup down.
 
-After every mutation: re-`layout.export`, re-render the help footer, and `pane.focus` the
+After every mutation: re-`layout.export`, re-`pane.layout` (the map's numbers are the pane's
+size, so they have to be re-read too), re-render the help footer, and `pane.focus` the
 tracked current pane so herdr's focus keeps following it.
 
 ---

@@ -28,6 +28,17 @@ func TestLayoutKeysReachTheRightOperation(t *testing.T) {
 		{"l", "swap-dir w1S:p2 right"},
 		{"right", "swap-dir w1S:p2 right"},
 
+		// Resizing moves a boundary rather than a pane, so it too is one call, with
+		// herdr picking the step: the amount goes over as zero.
+		{"ctrl+h", "resize w1S:p2 left 0.00"},
+		{"ctrl+left", "resize w1S:p2 left 0.00"},
+		{"ctrl+j", "resize w1S:p2 down 0.00"},
+		{"ctrl+down", "resize w1S:p2 down 0.00"},
+		{"ctrl+k", "resize w1S:p2 up 0.00"},
+		{"ctrl+up", "resize w1S:p2 up 0.00"},
+		{"ctrl+l", "resize w1S:p2 right 0.00"},
+		{"ctrl+right", "resize w1S:p2 right 0.00"},
+
 		// Re-splitting left within [[p1 | p2] | [p3 | p4]] only reorders leaves,
 		// so the reconciler gets there with an explicit swap rather than a rebuild.
 		{"H", "swap w1S:p1 w1S:p2"},
@@ -71,8 +82,10 @@ func TestRebuildEndsWithFocusBackOnThePane(t *testing.T) {
 	f := newFakeClient(evenFour())
 	press(t, start(t, f, ModeLayout), "2")
 
-	if last := f.calls[len(f.calls)-1]; !strings.HasPrefix(last, "export") {
-		t.Fatalf("the last call is %q, want the reload", last)
+	// The reload is the last thing a rebuild does: the tab's tree, then where it puts
+	// the panes.
+	if last := f.calls[len(f.calls)-2:]; last[0] != "export w1S:p2" || last[1] != "layout w1S:p2" {
+		t.Fatalf("the rebuild ended with %q, want the reload", last)
 	}
 	if !f.took("focus w1S:p2") {
 		t.Fatalf("focus was never restored; calls were: %s", f.log())
@@ -172,10 +185,38 @@ func TestSwapWithNoNeighbourFlashes(t *testing.T) {
 	}
 }
 
+// TestResizeAtTheLimitFlashes: herdr clamps a split's ratio, so a boundary that will
+// not move any further has to read as "that is as far as it goes", not as a key that
+// stopped working.
+func TestResizeAtTheLimitFlashes(t *testing.T) {
+	f := newFakeClient(evenFour())
+	f.resizeRefused = true
+	m := press(t, start(t, f, ModeLayout), "ctrl+h")
+
+	if m.statusKind != statusFlash {
+		t.Fatalf("status kind is %v (%q), want a flash", m.statusKind, m.status)
+	}
+	if m.status != "cannot resize left any further" {
+		t.Errorf("status is %q", m.status)
+	}
+}
+
+// TestResizeRedrawsTheMap is why a resize is worth showing: the numbers in the map
+// are the pane's size, so the map has to be re-read after the boundary moves or it
+// reports the size the pane used to be.
+func TestResizeRedrawsTheMap(t *testing.T) {
+	f := newFakeClient(evenFour())
+	press(t, start(t, f, ModeLayout), "ctrl+l")
+
+	if last := f.calls[len(f.calls)-2:]; last[0] != "export w1S:p2" || last[1] != "layout w1S:p2" {
+		t.Fatalf("the resize ended with %q, want the reload", last)
+	}
+}
+
 // TestSinglePaneTabRefusesToRearrange keeps the keys that need a neighbour from
 // silently doing nothing.
 func TestSinglePaneTabRefusesToRearrange(t *testing.T) {
-	for _, k := range []string{"h", "H", "1", "5", " ", "e"} {
+	for _, k := range []string{"h", "H", "ctrl+h", "1", "5", " ", "e"} {
 		t.Run(k, func(t *testing.T) {
 			f := newFakeClient(tree.Leaf(curPane))
 			m := press(t, start(t, f, ModeLayout), k)
@@ -264,7 +305,7 @@ func TestLayoutViewSurvivesASmallPopup(t *testing.T) {
 	f := newFakeClient(evenFour())
 	m := start(t, f, ModeLayout)
 
-	for _, size := range [][2]int{{63, 12}, {40, 6}, {20, 4}, {12, 3}} {
+	for _, size := range [][2]int{{63, 20}, {63, 12}, {40, 6}, {20, 4}, {12, 3}} {
 		width, height := size[0], size[1]
 		m = send(t, m, sizeMsg(width, height))
 
@@ -280,7 +321,7 @@ func TestLayoutViewSurvivesASmallPopup(t *testing.T) {
 	}
 
 	// At the size the action actually asks for, nothing is lost.
-	view := plain(send(t, m, sizeMsg(63, 12)).View())
+	view := plain(send(t, m, sizeMsg(inner(LayoutPopupSize()))).View())
 	if !strings.Contains(view, "this pane: p2") || !strings.Contains(view, "swap pane") {
 		t.Errorf("the full-size panel is missing something:\n%s", view)
 	}

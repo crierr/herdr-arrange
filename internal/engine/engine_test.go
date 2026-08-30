@@ -78,6 +78,90 @@ func TestTabReportsAClosedPane(t *testing.T) {
 	}
 }
 
+// TestGeometryReportsWhereThePanesAre: the split tree says how the tab is divided,
+// and this is what that comes to in cells — which is the only thing the minimap can
+// be drawn from, and the only place a pane's size comes from.
+func TestGeometryReportsWhereThePanesAre(t *testing.T) {
+	_, eng, _ := setup(t, r(leaf("p1"), d(leaf("p2"), leaf("p3"))), "p2")
+
+	geo, err := eng.Geometry(context.Background())
+	if err != nil {
+		t.Fatalf("Geometry: %v", err)
+	}
+	if geo.Area != fakeArea {
+		t.Errorf("area = %+v, want the screen %+v", geo.Area, fakeArea)
+	}
+
+	want := map[string]herdr.LayoutRect{
+		"p1": {X: 0, Y: 0, Width: 160, Height: 80},
+		"p2": {X: 160, Y: 0, Width: 160, Height: 40},
+		"p3": {X: 160, Y: 40, Width: 160, Height: 40},
+	}
+	if len(geo.Panes) != len(want) {
+		t.Fatalf("%d panes reported, want %d", len(geo.Panes), len(want))
+	}
+	for _, p := range geo.Panes {
+		if p.Rect != want[p.PaneID] {
+			t.Errorf("%s is at %+v, want %+v", p.PaneID, p.Rect, want[p.PaneID])
+		}
+	}
+}
+
+// TestResizeMovesTheBoundaryTheWayAsked is the semantics the keys promise, and the
+// one thing about resizing that is easy to get backwards: the split goes the way you
+// pressed, so the same key grows a pane on one side of it and shrinks one on the
+// other.
+func TestResizeMovesTheBoundaryTheWayAsked(t *testing.T) {
+	for _, c := range []struct {
+		dir  herdr.Direction
+		want int // the width p2, the right-hand pane, ends up with
+	}{
+		{herdr.Left, 176},  // the boundary moves left, so the right-hand pane grows
+		{herdr.DirRt, 144}, // and right, so it shrinks
+	} {
+		t.Run(string(c.dir), func(t *testing.T) {
+			fake, eng, _ := setup(t, r(leaf("p1"), leaf("p2")), "p2")
+			if err := eng.Resize(context.Background(), c.dir); err != nil {
+				t.Fatalf("Resize: %v", err)
+			}
+			if log := fake.callLog(); strings.Contains(log, "move") || strings.Contains(log, "swap") {
+				t.Fatalf("resizing rearranged the tab: %s", log)
+			}
+
+			geo, err := eng.Geometry(context.Background())
+			if err != nil {
+				t.Fatalf("Geometry: %v", err)
+			}
+			for _, p := range geo.Panes {
+				if p.PaneID == "p2" && p.Rect.Width != c.want {
+					t.Errorf("p2 is %d columns after resizing %s, want %d", p.Rect.Width, c.dir, c.want)
+				}
+			}
+		})
+	}
+}
+
+// TestResizeWithNothingToMoveReportsNoChange covers both ways herdr declines: a tab
+// with no split on that axis at all, and a ratio already at herdr's clamp. Neither is
+// an error — the popup flashes them.
+func TestResizeWithNothingToMoveReportsNoChange(t *testing.T) {
+	// One pane, so there is no split of any kind.
+	_, eng, _ := setup(t, leaf("p1"), "p1")
+	if err := eng.Resize(context.Background(), herdr.Left); !errors.Is(err, tree.ErrNoChange) {
+		t.Errorf("err = %v, want ErrNoChange", err)
+	}
+
+	// A split already as far left as herdr will put it.
+	_, eng, _ = setup(t, tree.Split(herdr.Right, 0.1, leaf("p1"), leaf("p2")), "p2")
+	if err := eng.Resize(context.Background(), herdr.Left); !errors.Is(err, tree.ErrNoChange) {
+		t.Errorf("err = %v at the clamp, want ErrNoChange", err)
+	}
+	// The other way still moves.
+	if err := eng.Resize(context.Background(), herdr.DirRt); err != nil {
+		t.Errorf("resizing away from the clamp failed: %v", err)
+	}
+}
+
 func TestApplyPresetRestructuresTheTab(t *testing.T) {
 	// Start from a shape no preset matches, so this must go through a rebuild.
 	fake, eng, stateDir := setup(t, r(r(leaf("p1"), leaf("p2")), leaf("p3")), "p2")

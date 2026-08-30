@@ -155,6 +155,103 @@ func (f *fakeHerdr) Snapshot(_ context.Context) (*herdr.SessionSnapshot, error) 
 	return snap, nil
 }
 
+// fakeArea is the screen the fake draws its tabs in: a wide terminal, with room to
+// halve twice either way and still come out even.
+var fakeArea = herdr.LayoutRect{Width: 320, Height: 80}
+
+func (f *fakeHerdr) PaneLayout(_ context.Context, paneID string) (*herdr.LayoutSnapshot, error) {
+	if err := f.track("layout %s", paneID); err != nil {
+		return nil, err
+	}
+	t := f.tabOf(paneID)
+	if t == nil {
+		return nil, &herdr.APIError{Code: "not_found", Message: "no such pane " + paneID}
+	}
+	snap := &herdr.LayoutSnapshot{
+		WorkspaceID: t.workspaceID, TabID: t.id, Zoomed: t.zoomed,
+		Area: fakeArea, FocusedPaneID: f.focused,
+	}
+	snap.Panes = paneRects(t.root, fakeArea, f.focused, nil)
+	return snap, nil
+}
+
+// paneRects lays a tree out in an area the way herdr's own split_rect does: the
+// first child is rounded to size and the second gets what is left, so the panes tile
+// the area exactly however the ratios fall.
+func paneRects(n *tree.Node, area herdr.LayoutRect, focused string, out []herdr.LayoutPane) []herdr.LayoutPane {
+	if n == nil {
+		return out
+	}
+	if n.IsLeaf() {
+		return append(out, herdr.LayoutPane{PaneID: n.PaneID, Focused: n.PaneID == focused, Rect: area})
+	}
+	first, second := area, area
+	if n.Dir == herdr.Right {
+		first.Width = int(float64(area.Width)*n.Ratio + 0.5)
+		second.X, second.Width = area.X+first.Width, area.Width-first.Width
+	} else {
+		first.Height = int(float64(area.Height)*n.Ratio + 0.5)
+		second.Y, second.Height = area.Y+first.Height, area.Height-first.Height
+	}
+	return paneRects(n.Second, second, focused, paneRects(n.First, first, focused, out))
+}
+
+func (f *fakeHerdr) ResizePane(_ context.Context, paneID string, dir herdr.Direction, amount float64) (*herdr.ResizeResult, error) {
+	if err := f.track("resize %s %s", paneID, dir); err != nil {
+		return nil, err
+	}
+	t := f.tabOf(paneID)
+	if t == nil {
+		return nil, &herdr.APIError{Code: "not_found", Message: "no such pane " + paneID}
+	}
+	res := &herdr.ResizeResult{PaneID: paneID, FocusedPaneID: f.focused, Reason: "unchanged"}
+
+	if amount == 0 {
+		amount = 0.05 // herdr's own default step
+	}
+	axis := herdr.Right
+	if dir == herdr.Up || dir == herdr.DirDn {
+		axis = herdr.Down
+	}
+	if dir == herdr.Left || dir == herdr.Up {
+		amount = -amount
+	}
+
+	// herdr moves the split nearest the pane along that axis, which in a binary tree
+	// is the closest ancestor sharing it — and, since a pane at the edge of the tab
+	// has nothing beyond it, the same split whichever way the key pointed.
+	path, _ := t.root.Path(paneID)
+	for i := len(path); i > 0; i-- {
+		at := path[:i-1]
+		split := nodeAt(t.root, at)
+		if split == nil || split.Dir != axis {
+			continue
+		}
+		before := split.Ratio
+		t.root = tree.SetRatioAt(t.root, at, before+amount)
+		if nodeAt(t.root, at).Ratio != before {
+			res.Changed, res.Reason = true, ""
+		}
+		break
+	}
+	return res, nil
+}
+
+// nodeAt walks a path from the root, as herdr's own split paths do.
+func nodeAt(n *tree.Node, path []bool) *tree.Node {
+	for _, second := range path {
+		if n == nil || n.IsLeaf() {
+			return nil
+		}
+		if second {
+			n = n.Second
+		} else {
+			n = n.First
+		}
+	}
+	return n
+}
+
 func (f *fakeHerdr) SwapDirection(_ context.Context, paneID string, dir herdr.Direction) (*herdr.SwapResult, error) {
 	if err := f.track("swap-dir %s %s", paneID, dir); err != nil {
 		return nil, err

@@ -20,6 +20,8 @@ import (
 type Client interface {
 	Snapshot(ctx context.Context) (*herdr.SessionSnapshot, error)
 	ExportLayoutForPane(ctx context.Context, paneID string) (*herdr.LayoutDescription, error)
+	PaneLayout(ctx context.Context, paneID string) (*herdr.LayoutSnapshot, error)
+	ResizePane(ctx context.Context, paneID string, dir herdr.Direction, amount float64) (*herdr.ResizeResult, error)
 	SwapDirection(ctx context.Context, paneID string, dir herdr.Direction) (*herdr.SwapResult, error)
 	SwapPanes(ctx context.Context, sourcePaneID, targetPaneID string) (*herdr.SwapResult, error)
 	MovePane(ctx context.Context, paneID string, dest herdr.Destination, focus bool) (*herdr.MoveResult, error)
@@ -120,6 +122,34 @@ func (e *Engine) Tab(ctx context.Context) (*Tab, error) {
 // Snapshot reads the whole session, for the tree view.
 func (e *Engine) Snapshot(ctx context.Context) (*herdr.SessionSnapshot, error) {
 	return e.client.Snapshot(ctx)
+}
+
+// Geometry reads where the panes of the tab are drawn, in cells. The split tree
+// says how the tab is divided; this is what that comes to on screen, which is what
+// the minimap draws and where a pane's size comes from.
+//
+// It is a separate read from Tab because only the views want it: an operation acts
+// on the tree, and making every rebuild pay for a second round trip would buy
+// nothing.
+func (e *Engine) Geometry(ctx context.Context) (*herdr.LayoutSnapshot, error) {
+	return e.client.PaneLayout(ctx, e.paneID)
+}
+
+// Resize moves the split nearest to the pane in a direction: the boundary goes the
+// way asked, so the pane grows when the split is on that side of it and shrinks
+// when it is on the other. herdr picks the step.
+//
+// Returns tree.ErrNoChange when there is no split to move that way, or when the
+// ratio is already at herdr's clamp.
+func (e *Engine) Resize(ctx context.Context, dir herdr.Direction) error {
+	res, err := e.client.ResizePane(ctx, e.paneID, dir, 0)
+	if err != nil {
+		return err
+	}
+	if !res.Changed {
+		return fmt.Errorf("cannot resize %s any further: %w", dir, tree.ErrNoChange)
+	}
+	return nil
 }
 
 // Swap exchanges the pane with its neighbour in a direction, keeping the tab's

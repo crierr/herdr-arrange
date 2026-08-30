@@ -69,8 +69,12 @@ type Model struct {
 
 	width, height int
 
-	// tab is layout mode's data, re-read after every action.
-	tab *engine.Tab
+	// tab is layout mode's data, re-read after every action. geo is where its panes
+	// are on screen, for the minimap; geoErr is why there is no picture, which the
+	// map's own space reports rather than the status line.
+	tab    *engine.Tab
+	geo    *herdr.LayoutSnapshot
+	geoErr error
 
 	// rows is tree mode's data, derived from a session snapshot: the whole tree, of
 	// which level decides how much is on screen. cursor indexes rows and is always on
@@ -180,10 +184,13 @@ func (m Model) Init() tea.Cmd { return m.reload() }
 
 // messages
 
-// tabMsg carries the result of reading the current tab.
+// tabMsg carries the result of reading the current tab, and of the geometry read
+// that goes with it.
 type tabMsg struct {
-	tab *engine.Tab
-	err error
+	tab    *engine.Tab
+	geo    *herdr.LayoutSnapshot
+	geoErr error
+	err    error
 }
 
 // snapshotMsg carries the result of reading the whole session.
@@ -218,14 +225,23 @@ func (m Model) readSession() tea.Cmd {
 	}
 }
 
-// readTab reads the tab being arranged, which is what layout mode renders.
+// readTab reads the tab being arranged, which is what layout mode renders: its
+// split tree, and where that puts the panes on screen.
+//
+// The geometry is asked for separately and its failure kept separately: it is the
+// minimap's, and a popup that can still rearrange the tab is worth more than one
+// that closed because it could not draw a picture of it.
 func (m Model) readTab() tea.Cmd {
 	eng := m.eng
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
 		defer cancel()
 		tab, err := eng.Tab(ctx)
-		return tabMsg{tab: tab, err: err}
+		if err != nil {
+			return tabMsg{err: err}
+		}
+		geo, geoErr := eng.Geometry(ctx)
+		return tabMsg{tab: tab, geo: geo, geoErr: geoErr}
 	}
 }
 
@@ -304,7 +320,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			return m.failed(msg.err)
 		}
-		m.tab = msg.tab
+		m.tab, m.geo, m.geoErr = msg.tab, msg.geo, msg.geoErr
 		return m, nil
 
 	case snapshotMsg:

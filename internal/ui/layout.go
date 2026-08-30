@@ -16,9 +16,12 @@ import (
 // The size layout mode wants. The action asks herdr for a popup this big, so the
 // help panel and the popup geometry cannot drift apart; the tests hold the panel
 // to these numbers.
+//
+// The height is the map (minimapHeight), ten lines of help and the two status lines
+// under their rule (statusHeight).
 const (
 	layoutPanelWidth  = 60
-	layoutPanelHeight = 12
+	layoutPanelHeight = minimapHeight + 10 + statusHeight
 )
 
 // layoutKey handles a keypress in layout mode.
@@ -42,6 +45,15 @@ func (m Model) layoutKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		eng := m.eng
 		return m, m.op(nextStay, func(ctx context.Context) (string, error) {
 			return "re-split to the " + sideWord(dir), eng.ReSplit(ctx, dir)
+		})
+	}
+	if dir, ok := resizeKeys[key]; ok {
+		if !m.multiPane() {
+			return m.flashSinglePane()
+		}
+		eng := m.eng
+		return m, m.op(nextStay, func(ctx context.Context) (string, error) {
+			return "the split moved " + string(dir), eng.Resize(ctx, dir)
 		})
 	}
 	if n, err := strconv.Atoi(key); err == nil && n >= 1 && n <= len(tree.Presets) {
@@ -124,6 +136,17 @@ var reSplitKeys = map[string]herdr.Direction{
 	"L": herdr.DirRt, "shift+right": herdr.DirRt,
 }
 
+// resizeKeys move a boundary rather than a pane: the split nearest the pane in that
+// direction goes that way, as tmux's resize-pane does. So ctrl+l widens a pane with
+// something to its right and narrows one with something to its left, and either way
+// the line you were pointing at is the line that moves.
+var resizeKeys = map[string]herdr.Direction{
+	"ctrl+h": herdr.Left, "ctrl+left": herdr.Left,
+	"ctrl+j": herdr.DirDn, "ctrl+down": herdr.DirDn,
+	"ctrl+k": herdr.Up, "ctrl+up": herdr.Up,
+	"ctrl+l": herdr.DirRt, "ctrl+right": herdr.DirRt,
+}
+
 // dirWord names where a neighbour is, for the swap status line.
 func dirWord(dir herdr.Direction) string {
 	switch dir {
@@ -167,15 +190,17 @@ func (m Model) layoutView() string {
 	on := m.multiPane()
 
 	// help renders one "keys  description" line. The direction bindings are wide
-	// enough to need their own column; the single keys below the presets get a
-	// narrower one, so neither block is padded out to the other's width.
+	// enough to need their own column — 25 is the resize line plus a gap; the single
+	// keys below the presets get a narrower one, so neither block is padded out to the
+	// other's width.
 	help := func(keys, desc string, width int, enabled bool) string {
 		return " " + pad(t.keyOr(enabled).Render(keys), width) + t.descOr(enabled).Render(desc)
 	}
 
 	lines := []string{
-		help("h/j/k/l  ←↓↑→", "swap pane", 22, on),
-		help("H/J/K/L  shift+←↓↑→", "re-split pane", 22, on),
+		help("h/j/k/l  ←↓↑→", "swap pane", 25, on),
+		help("H/J/K/L  shift+←↓↑→", "re-split pane", 25, on),
+		help("ctrl+h/j/k/l  ctrl+←↓↑→", "resize pane", 25, on),
 	}
 
 	// The presets go in a grid, with the one the tab currently matches picked out
@@ -205,9 +230,19 @@ func (m Model) layoutView() string {
 		help("enter / esc", "close", 14, true),
 	)
 
-	// In a popup too short for the whole panel, help is what gives way: the status
+	room := m.height - statusHeight
+
+	// The map goes above the help, and is the first thing to go when the popup is
+	// shorter than the panel asked for: it is a picture of what the help acts on, so
+	// it is worth less than the help itself. All of it or none of it — half a map
+	// would be a lie about where the panes are.
+	if room >= len(lines)+minimapHeight {
+		lines = append(m.minimapBlock(), lines...)
+	}
+
+	// In a popup too short even for the help, help is what gives way: the status
 	// lines are the only thing telling the user what they are looking at.
-	if room := m.height - statusHeight; room < len(lines) {
+	if room < len(lines) {
 		lines = lines[:max(room, 0)]
 	}
 	return strings.Join(append(lines, m.statusLines(m.layoutState())), "\n")

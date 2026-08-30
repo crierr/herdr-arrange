@@ -100,32 +100,52 @@ func (p PaneInfo) DisplayName() string {
 	return p.PaneID
 }
 
-// TabArea is where a tab is drawn, in cells. herdr fits a popup into the very
-// same area (`state.view.terminal_area`), so this is how big a popup can be —
-// nothing else in the API reports the size of the screen.
-type TabArea struct {
+// LayoutRect is where something is drawn, in cells, from the top-left of the
+// terminal.
+type LayoutRect struct {
+	X      int `json:"x"`
+	Y      int `json:"y"`
 	Width  int `json:"width"`
 	Height int `json:"height"`
 }
 
-// TabLayout is one tab's geometry, of which we only want the area it is drawn in.
-type TabLayout struct {
-	TabID string  `json:"tab_id"`
-	Area  TabArea `json:"area"`
+// LayoutPane is where one pane of a tab sits.
+type LayoutPane struct {
+	PaneID  string     `json:"pane_id"`
+	Focused bool       `json:"focused"`
+	Rect    LayoutRect `json:"rect"`
+}
+
+// LayoutSnapshot is a tab's geometry: the area it is drawn in, and where each of
+// its panes sits inside it. pane.layout returns one; session.snapshot reports one
+// per tab.
+//
+// The area is also what herdr fits a popup into (`state.view.terminal_area`), so
+// it doubles as how big a popup can be — nothing else in the API reports the size
+// of the screen. The pane rects are what the minimap is a picture of: the split
+// tree says how the tab is divided, but only these say how many cells that comes
+// to.
+type LayoutSnapshot struct {
+	WorkspaceID   string       `json:"workspace_id"`
+	TabID         string       `json:"tab_id"`
+	Zoomed        bool         `json:"zoomed"`
+	Area          LayoutRect   `json:"area"`
+	FocusedPaneID string       `json:"focused_pane_id"`
+	Panes         []LayoutPane `json:"panes"`
 }
 
 // SessionSnapshot is the whole session in one response: every workspace, tab
 // and pane. The tree view is built from a single call to session.snapshot.
 type SessionSnapshot struct {
-	Version            string          `json:"version"`
-	Protocol           int             `json:"protocol"`
-	Workspaces         []WorkspaceInfo `json:"workspaces"`
-	Tabs               []TabInfo       `json:"tabs"`
-	Layouts            []TabLayout     `json:"layouts,omitempty"`
-	Panes              []PaneInfo      `json:"panes"`
-	FocusedWorkspaceID string          `json:"focused_workspace_id,omitempty"`
-	FocusedTabID       string          `json:"focused_tab_id,omitempty"`
-	FocusedPaneID      string          `json:"focused_pane_id,omitempty"`
+	Version            string           `json:"version"`
+	Protocol           int              `json:"protocol"`
+	Workspaces         []WorkspaceInfo  `json:"workspaces"`
+	Tabs               []TabInfo        `json:"tabs"`
+	Layouts            []LayoutSnapshot `json:"layouts,omitempty"`
+	Panes              []PaneInfo       `json:"panes"`
+	FocusedWorkspaceID string           `json:"focused_workspace_id,omitempty"`
+	FocusedTabID       string           `json:"focused_tab_id,omitempty"`
+	FocusedPaneID      string           `json:"focused_pane_id,omitempty"`
 }
 
 // SwapResult is the result of pane.swap. Reason is "no_neighbor",
@@ -155,6 +175,16 @@ type MoveResult struct {
 	ClosedTabID         string         `json:"closed_tab_id,omitempty"`
 	ClosedWorkspaceID   string         `json:"closed_workspace_id,omitempty"`
 	Reason              string         `json:"reason,omitempty"`
+}
+
+// ResizeResult is the result of pane.resize. Reason is "unchanged" when there was
+// no split to move that way, or when herdr's ratio clamp would not let it move
+// any further.
+type ResizeResult struct {
+	Changed       bool   `json:"changed"`
+	PaneID        string `json:"pane_id"`
+	FocusedPaneID string `json:"focused_pane_id"`
+	Reason        string `json:"reason,omitempty"`
 }
 
 // ZoomResult is the result of pane.zoom.

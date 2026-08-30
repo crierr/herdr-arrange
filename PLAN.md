@@ -111,7 +111,8 @@ filing separately; the reconciler below is the single place that would change.
 herdr-arrange/
   herdr-plugin.toml
   go.mod  go.sum
-  main.go                     # dispatch: open | open-tree | ui | drain
+  main.go                     # dispatch: open | open-tree | ui | drain | call
+  action.go                   # the open action and the startup drain
   internal/herdr/
     client.go                 # dial-per-request NDJSON client
     schema.go                 # request/response/param types
@@ -121,10 +122,14 @@ herdr-arrange/
     presets.go                # even-h, even-v, main-h, main-v, tiled
     ops.go                    # ReSplit(dir), Equalize()
     reconcile.go              # Plan(cur, want) → []Step   ← the whole restructure story
+  internal/engine/
+    engine.go                 # one pane's operations: read tab, plan, execute, retarget
+    journal.go                # the parking journal `drain` recovers from
   internal/ui/
     app.go                    # bubbletea root: mode switching, status line, error toast
     layout.go                 # layout mode view + keymap
     tree.go                   # tree-view mode view + keymap (viewport-scrolled)
+    geometry.go               # the popup size each view needs, for the action to ask for
     theme.go                  # lipgloss styles
   README.md
 ```
@@ -173,14 +178,25 @@ command = ["bin/arrange", "open-tree"]
 id = "ui"
 title = "Arrange"
 placement = "popup"
+width = 63
+height = 14
 command = ["bin/arrange", "ui"]
 ```
 
-Popup size is set per-open by the action (overriding the manifest), because the two modes
-need different heights: layout mode asks for `width 66, height 17`; tree mode asks for
-`width 60%, height min(rowCount+4, 80% of screen)` — oversized cell counts clamp down
-safely. Switching modes in-process keeps whatever size we were given, so **tree mode always
-scrolls** via `bubbles/viewport`.
+Popup size is set per-open by the action (overriding the manifest default above), because
+the two modes need different heights. herdr's border eats 3 columns and 2 rows of the outer
+size, and `internal/ui/geometry.go` derives the outer size from what the views render:
+
+- layout mode: `63 x 14`, from the help panel's `60 x 12`.
+- tree mode: the same width, `rows + 5 + 2` tall — the whole session with no scrolling —
+  floored at layout mode's height (`t` switches views inside the popup we were given) and
+  capped at 30 rows. **Not** `min(rows, 80%)` as first planned: nothing in the API reports
+  the terminal size, so the action cannot compute a percentage of it. Oversized cell counts
+  clamp down safely, so the cap is only there to keep a fifty-pane session from asking for
+  the whole screen.
+
+Beyond the cap, and whenever herdr clamps us, **tree mode scrolls** via `bubbles/viewport`
+and layout mode drops help lines from the bottom up.
 
 Keybindings are the user's to add (plugins cannot register keys). README will document:
 

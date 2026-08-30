@@ -1,0 +1,46 @@
+id = "soh.arrange"
+name = "Arrange"
+version = "0.1.0"
+description = "Interactive pane move, swap, re-split and layout"
+
+# popup placement for plugin panes landed in 0.7.4; layout.set_split_ratio in 0.7.2.
+min_herdr_version = "0.7.4"
+
+# Windows would need a named-pipe transport for the socket, and the layout methods
+# this depends on have no CLI wrapper to fall back to.
+platforms = ["macos", "linux"]
+
+# Built on the user's machine at install time: one static binary, no shipped
+# artefacts and no cross-compilation. Needs Go 1.24.2+ on PATH.
+[[build]]
+command = ["go", "build", "-trimpath", "-o", "bin/arrange", "."]
+
+# A re-split or a preset moves panes out to a scratch tab and back. If herdr is
+# killed mid-plan the panes survive, but in the wrong tab; this brings them home
+# on the next start, and does nothing when there is nothing to recover.
+[[startup]]
+command = ["bin/arrange", "drain"]
+
+[[actions]]
+id = "open"
+title = "Arrange panes"
+description = "Move, swap, re-split and lay out the panes of this tab"
+contexts = ["pane"]
+command = ["bin/arrange", "open"]
+
+[[actions]]
+id = "open-tree"
+title = "Arrange: move pane to…"
+description = "Send this pane to another tab or workspace"
+contexts = ["pane"]
+command = ["bin/arrange", "open-tree"]
+
+# The size here is only a default: the actions above override it per open, because
+# the two views want different heights and tree mode's depends on the session.
+[[panes]]
+id = "ui"
+title = "Arrange"
+placement = "popup"
+width = 63
+height = 14
+command = ["bin/arrange", "ui"]

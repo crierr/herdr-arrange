@@ -14,7 +14,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 
@@ -45,8 +44,12 @@ func main() {
 		err = runCall(os.Args[2:])
 	case "ui":
 		err = runUI()
-	case "open", "open-tree", "drain":
-		err = fmt.Errorf("%s: not implemented yet", cmd)
+	case "open":
+		err = runOpen(ui.ModeLayout)
+	case "open-tree":
+		err = runOpen(ui.ModeTree)
+	case "drain":
+		err = runDrain()
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 		return
@@ -108,7 +111,7 @@ func resolveTarget() (target, error) {
 	}
 
 	if t.PaneID == "" {
-		return t, errors.New("no pane to arrange: set ARRANGE_PANE, or run this from a herdr plugin action")
+		return t, errNoPane
 	}
 	return t, nil
 }

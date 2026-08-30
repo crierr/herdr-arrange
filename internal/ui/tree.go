@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -23,6 +24,31 @@ const treeChrome = 4
 // bracketed shortcut gets one less, which lines its number up with the connectors
 // below it — see renderRow.
 const treeIndent = 3
+
+// expandLevel is how far the tree is unfolded. One level for the whole tree rather
+// than a fold per node: the tree is three deep and exists to be read at a glance, so
+// what the user wants is usually "show me the workspaces" or "show me everything",
+// not the state of forty separate triangles.
+//
+// The popup is sized for the deepest level either way (see treeSizeForRows), so
+// folding never has to resize it and costs no flicker.
+type expandLevel int
+
+const (
+	levelWorkspaces expandLevel = iota // the workspaces alone
+	levelTabs                          // and the tabs in them; where the tree opens
+	levelPanes                         // and the panes in those
+)
+
+func (l expandLevel) String() string {
+	switch l {
+	case levelWorkspaces:
+		return "workspaces"
+	case levelTabs:
+		return "tabs"
+	}
+	return "panes"
+}
 
 // rowKind is what selecting a row does.
 type rowKind int
@@ -53,6 +79,30 @@ type row struct {
 	dim     bool // the workspace, tab or pane the arranged pane is already in
 	self    bool // the pane being arranged
 	sameTab bool // a pane sharing a tab with the arranged pane
+}
+
+// depth is how deep in the tree a row sits, and so which fold level reveals it. The
+// synthetic rows sit where their subject does: "new tab in this workspace" is a child
+// of the workspace it would go in, "new workspace" a sibling of the workspaces.
+func (r row) depth() int {
+	switch r.kind {
+	case rowTab, rowNewTabHere:
+		return 1
+	case rowPane:
+		return 2
+	}
+	return 0
+}
+
+// rowKey identifies a row across rebuilds and fold levels, so a selection can outlive
+// both.
+type rowKey struct {
+	kind                       rowKind
+	workspaceID, tabID, paneID string
+}
+
+func (r row) key() rowKey {
+	return rowKey{kind: r.kind, workspaceID: r.workspaceID, tabID: r.tabID, paneID: r.paneID}
 }
 
 // buildRows turns a session snapshot into the tree view, in snapshot order.
@@ -169,51 +219,90 @@ func panesWord(n int) string {
 	return fmt.Sprintf("%d panes", n)
 }
 
-// setRows installs a freshly built tree, keeping the selection on the same row
-// where it still exists and falling back to the pane being arranged.
+// setRows installs a freshly built tree, keeping the selection where it was.
 func (m *Model) setRows(rows []row) {
-	var was row
-	if m.cursor < len(m.rows) {
-		was = m.rows[m.cursor]
-	}
 	m.rows = rows
+	m.selectWant()
+	m.vp.Height = m.treeViewportHeight()
+	m.syncViewport()
+}
 
-	m.cursor = 0
-	for i, r := range rows {
-		if r.self {
-			m.cursor = i
-		}
-	}
-	for i, r := range rows {
-		if r.kind == was.kind && r.workspaceID == was.workspaceID && r.tabID == was.tabID && r.paneID == was.paneID {
-			m.cursor = i
+// visible reports whether the fold level shows a row.
+func (m Model) visible(r row) bool { return r.depth() <= int(m.level) }
+
+// selectWant puts the cursor on the row the user last picked, or as close to it as the
+// session and the fold level allow: the nearest row above it, which — the tree being
+// in order — is the parent that hides it. A row that is gone altogether hands the
+// selection back to the pane being arranged, which is where the tree started.
+//
+// Keeping the selection as a row rather than an index is what lets folding be
+// reversible: fold, and the cursor sits on the tab; unfold, and it is back on the pane.
+func (m *Model) selectWant() {
+	at := -1
+	for i, r := range m.rows {
+		if r.key() == m.want {
+			at = i
 			break
 		}
 	}
-
-	m.vp.Height = m.treeViewportHeight()
-	m.syncViewport()
+	if at < 0 {
+		for i, r := range m.rows {
+			if r.self {
+				at = i
+			}
+		}
+		at = max(at, 0)
+		if at < len(m.rows) {
+			m.want = m.rows[at].key()
+		}
+	}
+	for at > 0 && at < len(m.rows) && !m.visible(m.rows[at]) {
+		at--
+	}
+	m.cursor = at
 }
 
 func (m Model) treeViewportHeight() int {
 	return max(1, m.height-treeChrome)
 }
 
-// syncViewport re-renders the rows and scrolls so the selection stays visible.
+// syncViewport re-renders the rows on show and scrolls so the selection stays on
+// screen. The cursor indexes the whole tree and the viewport only the folded-out part
+// of it, so the two are counted apart.
 func (m *Model) syncViewport() {
-	lines := make([]string, len(m.rows))
-	for i, r := range m.rows {
-		lines[i] = m.renderRow(r, i == m.cursor)
+	shown := m.shown()
+	lines := make([]string, len(shown))
+	for at, i := range shown {
+		lines[at] = m.renderRow(m.rows[i], i == m.cursor)
 	}
 	m.vp.SetContent(strings.Join(lines, "\n"))
 
+	at := m.cursorLine()
 	switch {
-	case m.cursor < m.vp.YOffset:
-		m.vp.SetYOffset(m.cursor)
-	case m.cursor >= m.vp.YOffset+m.vp.Height:
-		m.vp.SetYOffset(m.cursor - m.vp.Height + 1)
+	// Folding can leave the whole tree shorter than the popup, and scrolled content
+	// in a view with room to spare is just a missing top.
+	case len(lines) <= m.vp.Height:
+		m.vp.SetYOffset(0)
+	case at < m.vp.YOffset:
+		m.vp.SetYOffset(at)
+	case at >= m.vp.YOffset+m.vp.Height:
+		m.vp.SetYOffset(at - m.vp.Height + 1)
 	}
 }
+
+// shown are the indices of the rows the fold level puts on screen, in order.
+func (m Model) shown() []int {
+	idx := make([]int, 0, len(m.rows))
+	for i, r := range m.rows {
+		if m.visible(r) {
+			idx = append(idx, i)
+		}
+	}
+	return idx
+}
+
+// cursorLine is which line of the viewport the selection is drawn on.
+func (m Model) cursorLine() int { return max(slices.Index(m.shown(), m.cursor), 0) }
 
 // renderRow draws one row, including the selection gutter and — on the selected
 // row — what enter would do to it.
@@ -298,6 +387,11 @@ func (m Model) treeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+u":
 		return m.moveCursor(-page / 2), nil
 
+	case "l", "right":
+		return m.foldTo(m.level + 1), nil
+	case "h", "left":
+		return m.foldTo(m.level - 1), nil
+
 	case "enter":
 		if m.cursor < len(m.rows) {
 			return m.act(m.rows[m.cursor])
@@ -324,12 +418,30 @@ func (m Model) treeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// moveCursor moves the selection by delta rows, clamped to the list.
+// moveCursor moves the selection by delta rows of the tree as it is folded, clamped
+// to the ends.
 func (m Model) moveCursor(delta int) Model {
-	if len(m.rows) == 0 {
+	shown := m.shown()
+	if len(shown) == 0 {
 		return m
 	}
-	m.cursor = min(max(m.cursor+delta, 0), len(m.rows)-1)
+	m.cursor = shown[min(max(m.cursorLine()+delta, 0), len(shown)-1)]
+	m.want = m.rows[m.cursor].key()
+	m.syncViewport()
+	return m
+}
+
+// foldTo unfolds the tree one level further, or folds it one back. The selection is
+// re-resolved rather than moved, so unfolding lands on the row the fold was hiding:
+// open the tree, fold to the workspaces and unfold again, and the cursor is back on
+// the pane being arranged.
+func (m Model) foldTo(level expandLevel) Model {
+	if level = min(max(level, levelWorkspaces), levelPanes); level == m.level {
+		return m
+	}
+	m.level = level
+	m.status, m.statusKind = "showing "+level.String(), statusInfo
+	m.selectWant()
 	m.syncViewport()
 	return m
 }
@@ -337,9 +449,12 @@ func (m Model) moveCursor(delta int) Model {
 // jump moves the selection to a shortcut's row and acts on it, so the user sees
 // what the key did.
 func (m Model) jump(match func(row) bool) (tea.Model, tea.Cmd) {
-	for i, r := range m.rows {
+	for _, r := range m.rows {
 		if match(r) {
-			m.cursor = i
+			// The row may be folded away — 1-9 and [c] work at any level — so ask for
+			// it and take whatever stands in for it on screen.
+			m.want = r.key()
+			m.selectWant()
 			m.syncViewport()
 			return m.act(r)
 		}
@@ -464,7 +579,7 @@ func (m Model) treeView() string {
 	return strings.Join([]string{
 		m.vp.View(),
 		t.rules(m.width),
-		" " + strings.Join([]string{kv("j/k", "move"), kv("enter", "apply"), kv("t", "layout"), kv("esc", "close")}, "  "),
+		" " + strings.Join([]string{kv("j/k", "move"), kv("h/l", "fold"), kv("enter", "apply"), kv("t", "layout"), kv("esc", "close")}, "  "),
 		" " + strings.Join([]string{kv("c", "new tab here"), kv("1-9", "workspace"), kv("N", "new workspace")}, "  "),
 		" " + m.message(),
 	}, "\n")

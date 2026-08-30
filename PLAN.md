@@ -192,7 +192,9 @@ size, and `internal/ui/geometry.go` derives the outer size from what the views r
 - layout mode: `63 x 14`, from the help panel's `60 x 12`.
 - tree mode: the same width, `rows + 4 + 2` tall — the whole session with no scrolling —
   floored at layout mode's height and capped at the screen, less 4 rows so the popup still
-  reads as floating above the session rather than replacing it.
+  reads as floating above the session rather than replacing it. `rows` counts every row,
+  including the panes the tree hides until it is unfolded: the popup cannot be resized, so
+  sizing it for the deepest fold level is what makes folding free.
 
 The screen comes from the snapshot: `layouts[].area` is where herdr draws a tab, and
 `spawn_popup_command` fits the popup into that very rect (`state.view.terminal_area`), so
@@ -423,19 +425,28 @@ and scrolled in a `bubbles/viewport`.
    └─ …
   [N] new workspace
 ────────────────────────────────────────────────────────────
- j/k move  enter apply  t layout  esc close
+ j/k move  h/l fold  enter apply  t layout  esc close
  c new tab here  1-9 workspace  N new workspace
 ```
 
 - Current workspace / tab / pane are **dimmed** (as specified) and the current pane is
   marked `(current)`.
+- `h`/`l` and left/right **fold** the tree through three levels: workspaces, workspaces and
+  their tabs (where it opens), and everything. One level for the whole tree rather than a
+  fold per node — the tree is three deep and is there to be read at a glance. The popup is
+  sized for the deepest level either way, so folding never resizes it.
+- The selection is kept as a **row, not an index**: folding hides the row the cursor is on,
+  so the cursor stands on the nearest visible ancestor while the row the user picked is
+  remembered. Unfolding therefore lands back where it came from, which is also how the tree
+  opens with the arranged pane's *tab* selected and reveals the pane itself on the first `l`.
 - The **selected row** states exactly what `enter` will do, beside the row itself — one of
   *new tab here* / *move this pane to tab X* / *swap this pane with pane X* /
   *back to layout mode*. It reads as an annotation of the row it is on, which is what keeps
   it short enough to sit there, and it is dropped rather than wrapped when a long label
   leaves no room (a wrapped line would push the help off the bottom of the popup).
   It was a line of its own until the tree wanted that line back.
-- Selection starts on the current pane.
+- Selection starts on the current pane, or on the row standing in for it while it is folded
+  away.
 - `1`–`9` = that workspace's "new tab here" action directly. `c` = new tab in the current
   workspace. `N` = new workspace.
 - After a **tab/new-tab** action → focus the destination and switch to **layout mode** on it.

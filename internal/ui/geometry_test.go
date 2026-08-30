@@ -94,8 +94,8 @@ func TestTreePopupSizeIsBoundedBothWays(t *testing.T) {
 	if got := lines(m); len(got) != height {
 		t.Errorf("the tree is %d lines inside a %d-line popup", len(got), height)
 	}
-	if m.cursor < m.vp.YOffset || m.cursor >= m.vp.YOffset+m.vp.Height {
-		t.Errorf("the cursor at %d is outside rows %d..%d", m.cursor, m.vp.YOffset, m.vp.YOffset+m.vp.Height)
+	if at := m.cursorLine(); at < m.vp.YOffset || at >= m.vp.YOffset+m.vp.Height {
+		t.Errorf("the cursor at %d is outside rows %d..%d", at, m.vp.YOffset, m.vp.YOffset+m.vp.Height)
 	}
 }
 

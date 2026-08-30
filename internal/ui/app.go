@@ -72,9 +72,14 @@ type Model struct {
 	// tab is layout mode's data, re-read after every action.
 	tab *engine.Tab
 
-	// rows and cursor are tree mode's data, derived from a session snapshot.
+	// rows is tree mode's data, derived from a session snapshot: the whole tree, of
+	// which level decides how much is on screen. cursor indexes rows and is always on
+	// a row the level shows; want is the row the user actually picked, which a fold
+	// can hide — see Model.selectWant.
 	rows   []row
 	cursor int
+	want   rowKey
+	level  expandLevel
 	vp     viewport.Model
 
 	status     string
@@ -135,6 +140,9 @@ func New(eng *engine.Engine, opts Options) Model {
 		mode:        opts.Mode,
 		askedWidth:  opts.AskedWidth,
 		askedHeight: opts.AskedHeight,
+		// The tree opens on the tabs: a workspace's panes are what you look for once
+		// you have found the tab, and the popup has room for them when you do.
+		level: levelTabs,
 		// Sensible until the first WindowSizeMsg arrives.
 		width:  60,
 		height: 16,

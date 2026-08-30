@@ -7,13 +7,13 @@ import (
 	"github.com/crierr/herdr-arrange/internal/tree"
 )
 
-// treeFixture opens tree mode on the fixture session, tall enough to show every
-// row at once.
+// treeFixture opens tree mode on the fixture session, unfolded to the panes and tall
+// enough to show every row at once.
 func treeFixture(t *testing.T) (*fakeClient, Model) {
 	t.Helper()
 	f := newFakeClient(evenFour())
 	m := start(t, f, ModeTree)
-	return f, send(t, m, sizeMsg(66, 30))
+	return f, send(t, m, sizeMsg(66, 30), key(t, "l"))
 }
 
 // rowAt finds the index of the first row matching a predicate.
@@ -28,14 +28,20 @@ func rowAt(t *testing.T, m Model, what string, match func(row) bool) int {
 	return -1
 }
 
+// selectRow puts the cursor on a row, unfolding the tree far enough to show it.
 func selectRow(t *testing.T, m Model, what string, match func(row) bool) Model {
 	t.Helper()
 	m.cursor = rowAt(t, m, what, match)
+	m.want = m.rows[m.cursor].key()
+	m.level = max(m.level, expandLevel(m.rows[m.cursor].depth()))
 	m.syncViewport()
 	return m
 }
 
-// TestTreeViewShowsTheWholeSession is the golden for the tree drawing: the
+// selectedLine is the line the cursor is drawn on, as rendered.
+func selectedLine(m Model) string { return lines(m)[m.cursorLine()-m.vp.YOffset] }
+
+// TestTreeViewShowsTheWholeSession is the golden for the tree drawing, unfolded: the
 // connectors, the ids, the labels, the pane counts, the current-pane marker, the
 // action preview beside the selected row and the two synthetic action rows.
 func TestTreeViewShowsTheWholeSession(t *testing.T) {
@@ -73,16 +79,97 @@ func TestTreeViewShowsTheWholeSession(t *testing.T) {
 	}
 }
 
-// TestTreeCursorStartsOnTheArrangedPane: the tree exists to move one pane, so
-// that pane is where the eye should start.
+// TestTreeCursorStartsOnTheArrangedPane: the tree exists to move one pane, so that
+// pane is where the eye should start — folded to the tabs that means its tab, and
+// unfolding gets to the pane itself without the user having to go looking for it.
 func TestTreeCursorStartsOnTheArrangedPane(t *testing.T) {
-	_, m := treeFixture(t)
+	f := newFakeClient(evenFour())
+	m := send(t, start(t, f, ModeTree), sizeMsg(66, 30))
 
-	if r := m.rows[m.cursor]; r.paneID != curPane {
+	if r := m.rows[m.cursor]; r.kind != rowTab || r.tabID != curTab {
 		t.Fatalf("the cursor starts on %+v", r)
+	}
+
+	m = press(t, m, "l")
+	if r := m.rows[m.cursor]; r.paneID != curPane {
+		t.Fatalf("unfolding left the cursor on %+v", r)
 	}
 	if !strings.Contains(plain(m.View()), "← back to layout mode") {
 		t.Errorf("preview is %q", m.treePreview())
+	}
+}
+
+// TestTreeFoldsToThreeLevels: the fold levels are the whole session at a glance, its
+// tabs, and everything.
+func TestTreeFoldsToThreeLevels(t *testing.T) {
+	_, m := treeFixture(t) // unfolded to the panes
+	m = press(t, m, "h")
+
+	if m.level != levelTabs {
+		t.Fatalf("h from the panes folded to %v", m.level)
+	}
+	// The pane the cursor was on is folded away, so its tab stands in for it.
+	tabs := []string{
+		"  [1] w1S  herdr-arrange",
+		" ▸ ├─ t1  main  4 panes  ← this pane is already in t1",
+		"   ├─ t2  logs  1 pane",
+		"   └─ [c] new tab in this workspace",
+		"  [2] wJ  notes",
+		"   └─ t1  1 pane",
+		"  [N] new workspace",
+	}
+	wantLines(t, m, tabs)
+
+	// Folded again, only the workspaces and the row that makes another one are left.
+	m = press(t, m, "h")
+	if m.level != levelWorkspaces {
+		t.Fatalf("h from the tabs folded to %v", m.level)
+	}
+	wantLines(t, m, []string{
+		"▸ [1] w1S  herdr-arrange  ← new tab here",
+		"  [2] wJ  notes",
+		"  [N] new workspace",
+	})
+
+	// And there is nowhere further to fold, in either direction.
+	if m = press(t, m, "h", "left"); m.level != levelWorkspaces {
+		t.Errorf("folding past the workspaces reached %v", m.level)
+	}
+	m = press(t, m, "right")
+	wantLines(t, m, tabs)
+	if m = press(t, m, "l", "l", "right"); m.level != levelPanes {
+		t.Errorf("unfolding past the panes reached %v", m.level)
+	}
+}
+
+// wantLines checks the top of the rendered view line for line.
+func wantLines(t *testing.T, m Model, want []string) {
+	t.Helper()
+	got := lines(m)
+	for i, wantLine := range want {
+		if i >= len(got) {
+			t.Fatalf("the view has only %d lines, want at least %d", len(got), len(want))
+		}
+		if trimmed := strings.TrimRight(got[i], " "); trimmed != wantLine {
+			t.Errorf("line %d:\n got %q\nwant %q", i+1, trimmed, wantLine)
+		}
+	}
+}
+
+// TestTreeFoldingKeepsThePopupsSize: the popup is built for the unfolded tree, so
+// folding never has to close and reopen it — which is the only reason folding is free.
+func TestTreeFoldingKeepsThePopupsSize(t *testing.T) {
+	f := newFakeClient(evenFour())
+	m := popupSized(t, f, ModeTree)
+
+	for _, k := range []string{"h", "h", "l", "l"} {
+		m = press(t, m, k)
+		if m.reopen != nil || m.quitting {
+			t.Fatalf("%q reopened the popup at %v", k, m.level)
+		}
+		if m.outgrewThePopup(treeSizeForRows(len(m.rows), m.room)) {
+			t.Fatalf("at %v the tree thinks it has outgrown its popup", m.level)
+		}
 	}
 }
 
@@ -124,7 +211,7 @@ func TestTreePreviewNamesEveryAction(t *testing.T) {
 				t.Errorf("preview is %q, want %q", got, c.want)
 			}
 
-			line := lines(m)[m.cursor-m.vp.YOffset]
+			line := selectedLine(m)
 			if !strings.HasPrefix(strings.TrimLeft(line, " "), "▸ ") || !strings.Contains(line, "← "+c.want) {
 				t.Errorf("the selected line reads %q, want %q beside the cursor", line, c.want)
 			}
@@ -228,7 +315,9 @@ func TestTreeSinglePaneTabHasNoLayoutToShow(t *testing.T) {
 	for _, k := range []string{"enter", "t"} {
 		t.Run(k, func(t *testing.T) {
 			f := newFakeClient(tree.Leaf(curPane))
-			m := press(t, start(t, f, ModeTree), k)
+			// Unfolded, so the cursor is on the pane: enter is only that route in
+			// when the pane's own row is on screen.
+			m := press(t, start(t, f, ModeTree), "l", k)
 
 			if m.mode != ModeTree {
 				t.Error("the popup left tree mode")
@@ -285,17 +374,17 @@ func TestTreeShortcutsActWithoutNavigating(t *testing.T) {
 // trees, so the selection has to drag the viewport along.
 func TestTreeScrollsToKeepTheCursorVisible(t *testing.T) {
 	f := newFakeClient(evenFour())
-	m := send(t, start(t, f, ModeTree), sizeMsg(66, 9)) // room for five rows
+	m := send(t, start(t, f, ModeTree), sizeMsg(66, 9), key(t, "l")) // room for five rows
 
 	if m.vp.Height != 5 {
 		t.Fatalf("viewport height is %d, want 5", m.vp.Height)
 	}
 
 	visible := func(m Model) bool {
-		return m.cursor >= m.vp.YOffset && m.cursor < m.vp.YOffset+m.vp.Height
+		return m.cursorLine() >= m.vp.YOffset && m.cursorLine() < m.vp.YOffset+m.vp.Height
 	}
 	if !visible(m) {
-		t.Fatalf("the initial cursor at %d is outside rows %d..%d", m.cursor, m.vp.YOffset, m.vp.YOffset+m.vp.Height)
+		t.Fatalf("the initial cursor at %d is outside rows %d..%d", m.cursorLine(), m.vp.YOffset, m.vp.YOffset+m.vp.Height)
 	}
 
 	// Walk the whole tree in both directions; the cursor must never leave the view.
@@ -303,14 +392,14 @@ func TestTreeScrollsToKeepTheCursorVisible(t *testing.T) {
 		m = press(t, m, k)
 		if !visible(m) {
 			t.Fatalf("after %q the cursor at %d is outside rows %d..%d",
-				k, m.cursor, m.vp.YOffset, m.vp.YOffset+m.vp.Height)
+				k, m.cursorLine(), m.vp.YOffset, m.vp.YOffset+m.vp.Height)
 		}
 	}
 	for range len(m.rows) + 3 {
 		m = press(t, m, "j")
 		if !visible(m) {
 			t.Fatalf("scrolling down left the cursor at %d outside rows %d..%d",
-				m.cursor, m.vp.YOffset, m.vp.YOffset+m.vp.Height)
+				m.cursorLine(), m.vp.YOffset, m.vp.YOffset+m.vp.Height)
 		}
 	}
 	if m.cursor != len(m.rows)-1 {
@@ -343,7 +432,7 @@ func TestTreeSelectionSurvivesAReload(t *testing.T) {
 func TestTreePreviewNeverWrapsARow(t *testing.T) {
 	for _, width := range []int{18, 30, 45, 63} {
 		f := newFakeClient(evenFour())
-		m := send(t, start(t, f, ModeTree), sizeMsg(width, 20))
+		m := send(t, start(t, f, ModeTree), sizeMsg(width, 20), key(t, "l"))
 
 		for i, line := range lines(m) {
 			if got := len([]rune(strings.TrimRight(line, " "))); got > width {
@@ -351,7 +440,7 @@ func TestTreePreviewNeverWrapsARow(t *testing.T) {
 			}
 		}
 		// Narrow enough and there is nothing worth saying; wide enough and it is said.
-		selected := lines(m)[m.cursor-m.vp.YOffset]
+		selected := selectedLine(m)
 		if want := width >= 45; strings.Contains(selected, "←") != want {
 			t.Errorf("at width %d the selected row reads %q", width, selected)
 		}

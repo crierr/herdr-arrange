@@ -131,17 +131,26 @@ is no layout to arrange there, but the pane can still go somewhere.
       └─ p1
   [N] new workspace
 ────────────────────────────────────────────────────────────
- j/k move  enter apply  t layout  esc close
+ j/k move  h/l fold  enter apply  t layout  esc close
  c new tab here  1-9 workspace  N new workspace
 ```
 
 The popup is as tall as the session needs, so the whole tree is usually on screen at
 once; past that — or on a short terminal — it scrolls.
 
+`h`/`l` and left/right fold the tree through three levels: the workspaces alone, their
+tabs, and the panes inside those. It opens on the tabs, which is the level you want for
+"where can this pane go"; `l` from there reveals the panes, starting with the one you
+came in on. The popup is sized for the deepest level whatever it is showing, so folding
+is instant and never resizes anything.
+
+Folding a row away moves the cursor to its parent but remembers the row itself, so
+unfolding lands back on it rather than at the top of the tree.
+
 `j`/`k` and the arrows move; `g`/`G`, `home`/`end`, `pgup`/`pgdown` and `ctrl+f`/`b`/`d`/`u`
 work too. `1`–`9` jump straight to a workspace's action, `c` and `N` to the two synthetic
-rows at the bottom. The selected row says exactly what `enter` will do, next to the row
-it would do it to:
+rows at the bottom — all of them at any fold level. The selected row says exactly what
+`enter` will do, next to the row it would do it to:
 
 | selected row | `enter` |
 |---|---|

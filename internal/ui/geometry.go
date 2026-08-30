@@ -30,6 +30,10 @@ func LayoutPopupSize() (width, height int) {
 
 // TreePopupSize is the outer popup size for tree mode: tall enough for the whole
 // session, so the common case needs no scrolling.
+//
+// Every row counts, including the panes the tree does not show until it is unfolded.
+// The popup cannot be resized without closing it, so sizing it for the deepest fold
+// level is what makes unfolding free.
 func TreePopupSize(s *herdr.SessionSnapshot, paneID, tabID, workspaceID string) (width, height int) {
 	return treeSizeForRows(len(buildRows(s, paneID, tabID, workspaceID)), popupRoom(s))
 }

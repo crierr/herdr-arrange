@@ -190,14 +190,20 @@ the two modes need different heights. herdr's border eats 3 columns and 2 rows o
 size, and `internal/ui/geometry.go` derives the outer size from what the views render:
 
 - layout mode: `63 x 14`, from the help panel's `60 x 12`.
-- tree mode: the same width, `rows + 5 + 2` tall — the whole session with no scrolling —
-  floored at layout mode's height and capped at 30 rows. **Not** `min(rows, 80%)` as first
-  planned: nothing in the API reports the terminal size, so the action cannot compute a
-  percentage of it. Oversized cell counts clamp down safely, so the cap is only there to
-  keep a fifty-pane session from asking for the whole screen.
+- tree mode: the same width, `rows + 4 + 2` tall — the whole session with no scrolling —
+  floored at layout mode's height and capped at the screen, less 4 rows so the popup still
+  reads as floating above the session rather than replacing it.
+
+The screen comes from the snapshot: `layouts[].area` is where herdr draws a tab, and
+`spawn_popup_command` fits the popup into that very rect (`state.view.terminal_area`), so
+it is exactly the room available. The old blind 30-row cap survives only as the fallback
+for a snapshot that does not report an area — the original plan assumed nothing in the API
+reported the screen size, which turned out to be wrong.
 
 Beyond the cap, and whenever herdr clamps us, **tree mode scrolls** via `bubbles/viewport`
-and layout mode drops help lines from the bottom up.
+and layout mode drops help lines from the bottom up. The UI recomputes the tree's wanted
+size from its own copy of the snapshot when deciding whether to reopen, so it has to read
+the area the same way the action does — `TestTheUIAgreesWithTheActionAboutTheTreesSize`.
 
 ### Resizing on a mode switch
 
@@ -406,26 +412,29 @@ Single `session.snapshot` call builds everything. Rows are a flat list with a `k
 and scrolled in a `bubbles/viewport`.
 
 ```
-[1] w1S  herdr-arrange                    ← new tab in workspace herdr-arrange
-    ├─ t1  main
-    │  ├─ p2  claude  (current)           ← dimmed
-    │  └─ p5  nvim
-    ├─ t2  logs
-    │  └─ p7  tail
-    └─ [c] new tab in this workspace       ← only under the current workspace
-[2] wJ   notes
-    └─ …
-[N] new workspace
+   [1] w1S  herdr-arrange
+   ├─ t1  main
+   │  ├─ p2  claude  (current)              (dimmed)
+ ▸ │  └─ p5  nvim  ← swap this pane with p5
+   ├─ t2  logs
+   │  └─ p7  tail
+   └─ [c] new tab in this workspace         (only under the current workspace)
+   [2] wJ  notes
+   └─ …
+   [N] new workspace
 ────────────────────────────────────────────────────────────
- j/k ↓↑ move   enter apply   c new tab here   1-9 workspace   t/esc back
- → swap this pane with wJ:p1
+ j/k move  enter apply  t layout  esc close
+ c new tab here  1-9 workspace  N new workspace
 ```
 
 - Current workspace / tab / pane are **dimmed** (as specified) and the current pane is
   marked `(current)`.
-- The bottom line always states exactly what `enter` will do — one of
-  *new tab in workspace X* / *move this pane to tab X* / *swap this pane with pane X* /
-  *back to layout mode*.
+- The **selected row** states exactly what `enter` will do, beside the row itself — one of
+  *new tab here* / *move this pane to tab X* / *swap this pane with pane X* /
+  *back to layout mode*. It reads as an annotation of the row it is on, which is what keeps
+  it short enough to sit there, and it is dropped rather than wrapped when a long label
+  leaves no room (a wrapped line would push the help off the bottom of the popup).
+  It was a line of its own until the tree wanted that line back.
 - Selection starts on the current pane.
 - `1`–`9` = that workspace's "new tab here" action directly. `c` = new tab in the current
   workspace. `N` = new workspace.
@@ -451,7 +460,8 @@ Cross-workspace tab moves are `pane.move {destination:{type:"tab", tab_id, split
    and focus restore. Integration-tested against a real server in a scratch workspace
    (the harness I used above, promoted to `scripts/e2e.sh`).
 4. **Layout mode UI**: keymap, help panel, status line, live re-export after each action.
-5. **Tree-view mode UI**: snapshot → rows, viewport scrolling, action preview line.
+5. **Tree-view mode UI**: snapshot → rows, viewport scrolling, action preview beside the
+   selected row.
 6. **Actions + manifest + startup drain**: mode selection, popup sizing, `ui_busy` handling.
 7. **README**: install, the two keybindings, the Go prerequisite, the parking-tab note,
    and a short "why a scratch tab flashes" explanation.

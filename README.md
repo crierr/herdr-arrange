@@ -117,28 +117,31 @@ allow* rather than claiming an evenness it cannot deliver.
 is no layout to arrange there, but the pane can still go somewhere.
 
 ```
-  [1] w1S  herdr-arrange
-  ├─ t1  main  4 panes
-  │  ├─ p1
-▸ │  ├─ p2  claude  (current)
-  │  ├─ p3
-  │  └─ p4
-  ├─ t2  logs  1 pane
-  │  └─ p7  tail
-  └─ [c] new tab in this workspace
-  [2] wJ  notes
-  └─ t1  1 pane
-     └─ p1
-  [N] new workspace
+   [1] w1S  herdr-arrange
+   ├─ t1  main  4 panes
+   │  ├─ p1
+   │  ├─ p2  claude  (current)
+ ▸ │  ├─ p3  ← swap this pane with p3
+   │  └─ p4
+   ├─ t2  logs  1 pane
+   │  └─ p7  tail
+   └─ [c] new tab in this workspace
+   [2] wJ  notes
+   └─ t1  1 pane
+      └─ p1
+   [N] new workspace
 ────────────────────────────────────────────────────────────
  j/k move  enter apply  t layout  esc close
  c new tab here  1-9 workspace  N new workspace
- → swap this pane with p3
 ```
+
+The popup is as tall as the session needs, so the whole tree is usually on screen at
+once; past that — or on a short terminal — it scrolls.
 
 `j`/`k` and the arrows move; `g`/`G`, `home`/`end`, `pgup`/`pgdown` and `ctrl+f`/`b`/`d`/`u`
 work too. `1`–`9` jump straight to a workspace's action, `c` and `N` to the two synthetic
-rows at the bottom. The last line always says exactly what `enter` will do:
+rows at the bottom. The selected row says exactly what `enter` will do, next to the row
+it would do it to:
 
 | selected row | `enter` |
 |---|---|

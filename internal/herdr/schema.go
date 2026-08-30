@@ -100,6 +100,20 @@ func (p PaneInfo) DisplayName() string {
 	return p.PaneID
 }
 
+// TabArea is where a tab is drawn, in cells. herdr fits a popup into the very
+// same area (`state.view.terminal_area`), so this is how big a popup can be —
+// nothing else in the API reports the size of the screen.
+type TabArea struct {
+	Width  int `json:"width"`
+	Height int `json:"height"`
+}
+
+// TabLayout is one tab's geometry, of which we only want the area it is drawn in.
+type TabLayout struct {
+	TabID string  `json:"tab_id"`
+	Area  TabArea `json:"area"`
+}
+
 // SessionSnapshot is the whole session in one response: every workspace, tab
 // and pane. The tree view is built from a single call to session.snapshot.
 type SessionSnapshot struct {
@@ -107,6 +121,7 @@ type SessionSnapshot struct {
 	Protocol           int             `json:"protocol"`
 	Workspaces         []WorkspaceInfo `json:"workspaces"`
 	Tabs               []TabInfo       `json:"tabs"`
+	Layouts            []TabLayout     `json:"layouts,omitempty"`
 	Panes              []PaneInfo      `json:"panes"`
 	FocusedWorkspaceID string          `json:"focused_workspace_id,omitempty"`
 	FocusedTabID       string          `json:"focused_tab_id,omitempty"`

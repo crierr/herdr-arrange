@@ -7,13 +7,20 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/crierr/herdr-arrange/internal/herdr"
 )
 
 // treeChrome is how many lines the tree view spends below the tree itself: a
-// rule, two lines of help, the action preview and the status message.
-const treeChrome = 5
+// rule, two lines of help and the status message. The action preview is not among
+// them: it rides on the selected row, where the eye already is, and the line that
+// bought back goes to the tree.
+const treeChrome = 4
+
+// treeIndent is the left margin every row starts with, selection marker included,
+// so the box-drawing prefixes do not sit against the popup's border.
+const treeIndent = 3
 
 // rowKind is what selecting a row does.
 type rowKind int
@@ -206,7 +213,8 @@ func (m *Model) syncViewport() {
 	}
 }
 
-// renderRow draws one row, including the two-column selection gutter.
+// renderRow draws one row, including the selection gutter and — on the selected
+// row — what enter would do to it.
 func (m Model) renderRow(r row, selected bool) string {
 	t := m.theme
 
@@ -216,9 +224,11 @@ func (m Model) renderRow(r row, selected bool) string {
 		text, keyStyle = t.dim, t.dim
 	}
 
-	gutter := "  "
+	// A left margin, then the selection marker: the box-drawing prefixes read badly
+	// against the popup's border.
+	gutter := strings.Repeat(" ", treeIndent)
 	if selected {
-		gutter = t.cursor.Render("▸ ")
+		gutter = " " + t.cursor.Render("▸") + strings.Repeat(" ", treeIndent-2)
 	}
 
 	body := t.dim.Render(r.branch)
@@ -232,7 +242,30 @@ func (m Model) renderRow(r row, selected bool) string {
 	if r.note != "" {
 		body += "  " + t.note.Render(r.note)
 	}
+	if selected {
+		body += m.previewSuffix(treeIndent + lipgloss.Width(body))
+	}
 	return gutter + body
+}
+
+// previewSuffix is the action preview, drawn at the end of the selected row rather
+// than on a line of its own: it is about that row, and reading it means not looking
+// away from the cursor.
+//
+// It is dropped rather than wrapped when the row leaves too little room, because a
+// line that wraps pushes the bottom of the tree view off the popup.
+func (m Model) previewSuffix(used int) string {
+	const (
+		gap = "  ← "
+		// Below this much of a sentence an ellipsis says more than the words do.
+		least = 8
+	)
+
+	room := m.width - used - 1
+	if room < lipgloss.Width(gap)+least {
+		return ""
+	}
+	return m.theme.state.Render(truncate(gap+m.treePreview(), room))
 }
 
 // treeKey handles a keypress in tree mode.
@@ -377,6 +410,10 @@ func (m Model) currentTabPanes() int {
 
 // treePreview states exactly what enter will do, which is the only way a tree of
 // mixed row kinds stays predictable.
+//
+// It reads as an annotation of the selected row, because that is where it is drawn:
+// a workspace row says "new tab here" rather than naming the workspace the row is
+// already named after — which also keeps it short enough to fit beside the row.
 func (m Model) treePreview() string {
 	if len(m.rows) == 0 || m.cursor >= len(m.rows) {
 		return "reading the session…"
@@ -384,33 +421,32 @@ func (m Model) treePreview() string {
 
 	r := m.rows[m.cursor]
 	switch r.kind {
-	case rowWorkspace:
-		return "→ new tab in workspace " + r.name
-	case rowNewTabHere:
-		return "→ new tab in this workspace"
+	case rowWorkspace, rowNewTabHere:
+		return "new tab here"
 	case rowNewWorkspace:
-		return "→ move this pane to a new workspace"
+		return "move this pane to a new workspace"
 	case rowTab:
 		if r.tabID == m.eng.TabID() {
-			return "→ this pane is already in " + shortID(r.tabID)
+			return "this pane is already in " + shortID(r.tabID)
 		}
-		return "→ move this pane to " + shortID(r.tabID)
+		return "move this pane to " + shortID(r.tabID)
 	case rowPane:
 		switch {
 		case r.self && m.currentTabPanes() > 1:
-			return "→ back to layout mode"
+			return "back to layout mode"
 		case r.self:
-			return "→ this is the pane you are moving"
+			return "the pane you are moving"
 		case r.sameTab:
-			return "→ swap this pane with " + shortID(r.paneID)
+			return "swap this pane with " + shortID(r.paneID)
 		default:
-			return "→ move this pane next to " + shortID(r.paneID)
+			return "move this pane next to " + shortID(r.paneID)
 		}
 	}
 	return ""
 }
 
-// treeView renders tree mode: the scrolling tree over its help and preview.
+// treeView renders tree mode: the scrolling tree over its help. What enter would
+// do is on the selected row, not down here — see previewSuffix.
 func (m Model) treeView() string {
 	t := m.theme
 	kv := func(key, desc string) string {
@@ -422,7 +458,6 @@ func (m Model) treeView() string {
 		t.rules(m.width),
 		" " + strings.Join([]string{kv("j/k", "move"), kv("enter", "apply"), kv("t", "layout"), kv("esc", "close")}, "  "),
 		" " + strings.Join([]string{kv("c", "new tab here"), kv("1-9", "workspace"), kv("N", "new workspace")}, "  "),
-		" " + t.state.Render(truncate(m.treePreview(), m.width-1)),
 		" " + m.message(),
 	}, "\n")
 }

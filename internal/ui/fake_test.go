@@ -221,6 +221,13 @@ func fixtureSnapshot(panes []string) *herdr.SessionSnapshot {
 		herdr.PaneInfo{PaneID: "w1S:p7", TabID: "w1S:t2", WorkspaceID: curWS, Label: "tail"},
 		herdr.PaneInfo{PaneID: "wJ:p1", TabID: "wJ:t1", WorkspaceID: "wJ"},
 	)
+	// herdr reports the area it draws each tab in, which is also the room a popup
+	// has: an ordinary terminal, so the tree is sized by its own height here.
+	for _, tab := range s.Tabs {
+		s.Layouts = append(s.Layouts, herdr.TabLayout{
+			TabID: tab.TabID, Area: herdr.TabArea{Width: 200, Height: 50},
+		})
+	}
 	return s
 }
 

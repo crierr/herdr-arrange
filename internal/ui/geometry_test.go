@@ -51,9 +51,22 @@ func TestTreePopupSizeShowsTheWholeSession(t *testing.T) {
 	}
 }
 
+// hugeSession is a session whose tree is longer than any popup: 40 more workspaces,
+// a tab and a pane each.
+func hugeSession() *herdr.SessionSnapshot {
+	s := fixtureSnapshot(evenFour().Leaves())
+	for i := range 40 {
+		ws := fmt.Sprintf("w%dZ", i)
+		s.Workspaces = append(s.Workspaces, herdr.WorkspaceInfo{WorkspaceID: ws, Number: i + 3})
+		s.Tabs = append(s.Tabs, herdr.TabInfo{TabID: ws + ":t1", WorkspaceID: ws, PaneCount: 1})
+		s.Panes = append(s.Panes, herdr.PaneInfo{PaneID: ws + ":p1", TabID: ws + ":t1", WorkspaceID: ws})
+	}
+	return s
+}
+
 // TestTreePopupSizeIsBoundedBothWays: a tiny tree asks for layout mode's size rather
 // than its own, so switching views costs nothing — and a huge session must not ask for
-// a popup the height of the screen.
+// a popup taller than the screen it has to fit on.
 func TestTreePopupSizeIsBoundedBothWays(t *testing.T) {
 	_, layoutHeight := LayoutPopupSize()
 
@@ -64,15 +77,13 @@ func TestTreePopupSizeIsBoundedBothWays(t *testing.T) {
 		t.Errorf("a one-pane session asks for height %d, want layout mode's %d", height, layoutHeight)
 	}
 
-	big := fixtureSnapshot(evenFour().Leaves())
-	for i := range 40 {
-		ws := fmt.Sprintf("w%dZ", i)
-		big.Workspaces = append(big.Workspaces, herdr.WorkspaceInfo{WorkspaceID: ws, Number: i + 3})
-		big.Tabs = append(big.Tabs, herdr.TabInfo{TabID: ws + ":t1", WorkspaceID: ws, PaneCount: 1})
-		big.Panes = append(big.Panes, herdr.PaneInfo{PaneID: ws + ":p1", TabID: ws + ":t1", WorkspaceID: ws})
+	big := hugeSession()
+	room := popupRoom(big)
+	if room == 0 {
+		t.Fatal("the fixture stopped reporting the screen size, so this tests the fallback instead")
 	}
-	if _, height := TreePopupSize(big, curPane, curTab, curWS); height != treePopupMaxHeight {
-		t.Errorf("a 40-workspace session asks for height %d, want the cap %d", height, treePopupMaxHeight)
+	if _, height := TreePopupSize(big, curPane, curTab, curWS); height != room-treePopupScreenMargin {
+		t.Errorf("a 40-workspace session asks for height %d on a %d-line screen", height, room)
 	}
 
 	// Whatever it asked for, the view fits it and still scrolls to the cursor.
@@ -85,6 +96,45 @@ func TestTreePopupSizeIsBoundedBothWays(t *testing.T) {
 	}
 	if m.cursor < m.vp.YOffset || m.cursor >= m.vp.YOffset+m.vp.Height {
 		t.Errorf("the cursor at %d is outside rows %d..%d", m.cursor, m.vp.YOffset, m.vp.YOffset+m.vp.Height)
+	}
+}
+
+// TestTreePopupSizeFollowsTheScreen: the popup can only be as tall as the area herdr
+// draws in, and that area is the one thing the snapshot does say about the terminal.
+// The blind cap is the fallback for a herdr that does not report it.
+func TestTreePopupSizeFollowsTheScreen(t *testing.T) {
+	big := hugeSession()
+
+	for _, screen := range []int{24, 50, 90} {
+		big.Layouts = []herdr.TabLayout{{TabID: curTab, Area: herdr.TabArea{Width: 200, Height: screen}}}
+		_, height := TreePopupSize(big, curPane, curTab, curWS)
+
+		_, floor := LayoutPopupSize()
+		want := max(screen-treePopupScreenMargin, floor)
+		if height != want {
+			t.Errorf("on a %d-line screen tree mode asks for %d, want %d", screen, height, want)
+		}
+	}
+
+	big.Layouts = nil
+	if _, height := TreePopupSize(big, curPane, curTab, curWS); height != treePopupMaxHeight {
+		t.Errorf("with no screen size reported tree mode asks for %d, want the cap %d", height, treePopupMaxHeight)
+	}
+}
+
+// TestTheUIAgreesWithTheActionAboutTheTreesSize: the action sizes the popup from the
+// snapshot and the UI decides whether to reopen from its own copy of it. If the two
+// ever read it differently, switching into tree mode would reopen the popup at a size
+// it then thinks it has outgrown — forever.
+func TestTheUIAgreesWithTheActionAboutTheTreesSize(t *testing.T) {
+	for _, s := range []*herdr.SessionSnapshot{fixtureSnapshot(evenFour().Leaves()), hugeSession()} {
+		f := newFakeClient(evenFour())
+		f.snapshot = s
+		m := start(t, f, ModeTree)
+
+		if got, want := sizeOf(treeSizeForRows(len(m.rows), m.room)), sizeOf(TreePopupSize(s, curPane, curTab, curWS)); got != want {
+			t.Errorf("the UI wants %v for %d rows, the action asked for %v", got, len(m.rows), want)
+		}
 	}
 }
 

@@ -36,25 +36,25 @@ func selectRow(t *testing.T, m Model, what string, match func(row) bool) Model {
 }
 
 // TestTreeViewShowsTheWholeSession is the golden for the tree drawing: the
-// connectors, the ids, the labels, the pane counts, the current-pane marker and
-// the two synthetic action rows.
+// connectors, the ids, the labels, the pane counts, the current-pane marker, the
+// action preview beside the selected row and the two synthetic action rows.
 func TestTreeViewShowsTheWholeSession(t *testing.T) {
 	_, m := treeFixture(t)
 
 	want := []string{
-		"  [1] w1S  herdr-arrange",
-		"  ├─ t1  main  4 panes",
-		"  │  ├─ p1",
-		"▸ │  ├─ p2  claude  (current)",
-		"  │  ├─ p3",
-		"  │  └─ p4",
-		"  ├─ t2  logs  1 pane",
-		"  │  └─ p7  tail",
-		"  └─ [c] new tab in this workspace",
-		"  [2] wJ  notes",
-		"  └─ t1  1 pane",
-		"     └─ p1",
-		"  [N] new workspace",
+		"   [1] w1S  herdr-arrange",
+		"   ├─ t1  main  4 panes",
+		"   │  ├─ p1",
+		" ▸ │  ├─ p2  claude  (current)  ← back to layout mode",
+		"   │  ├─ p3",
+		"   │  └─ p4",
+		"   ├─ t2  logs  1 pane",
+		"   │  └─ p7  tail",
+		"   └─ [c] new tab in this workspace",
+		"   [2] wJ  notes",
+		"   └─ t1  1 pane",
+		"      └─ p1",
+		"   [N] new workspace",
 	}
 
 	got := lines(m)
@@ -79,13 +79,14 @@ func TestTreeCursorStartsOnTheArrangedPane(t *testing.T) {
 	if r := m.rows[m.cursor]; r.paneID != curPane {
 		t.Fatalf("the cursor starts on %+v", r)
 	}
-	if !strings.Contains(plain(m.View()), "→ back to layout mode") {
+	if !strings.Contains(plain(m.View()), "← back to layout mode") {
 		t.Errorf("preview is %q", m.treePreview())
 	}
 }
 
-// TestTreePreviewNamesEveryAction: with five kinds of row in one list, the bottom
-// line is the only thing that makes enter predictable.
+// TestTreePreviewNamesEveryAction: with five kinds of row in one list, the preview
+// is the only thing that makes enter predictable — and it has to be on the selected
+// row, not merely somewhere on screen.
 func TestTreePreviewNamesEveryAction(t *testing.T) {
 	_, m := treeFixture(t)
 
@@ -95,30 +96,39 @@ func TestTreePreviewNamesEveryAction(t *testing.T) {
 		want  string
 	}{
 		{"another workspace", func(r row) bool { return r.kind == rowWorkspace && r.workspaceID == "wJ" },
-			"→ new tab in workspace notes"},
+			"new tab here"},
 		{"the current workspace", func(r row) bool { return r.kind == rowWorkspace && r.workspaceID == curWS },
-			"→ new tab in workspace herdr-arrange"},
+			"new tab here"},
 		{"another tab", func(r row) bool { return r.kind == rowTab && r.tabID == "w1S:t2" },
-			"→ move this pane to t2"},
+			"move this pane to t2"},
 		{"the current tab", func(r row) bool { return r.kind == rowTab && r.tabID == curTab },
-			"→ this pane is already in t1"},
+			"this pane is already in t1"},
 		{"a pane in this tab", func(r row) bool { return r.kind == rowPane && r.paneID == "w1S:p3" },
-			"→ swap this pane with p3"},
+			"swap this pane with p3"},
 		{"a pane elsewhere", func(r row) bool { return r.kind == rowPane && r.paneID == "wJ:p1" },
-			"→ move this pane next to p1"},
+			"move this pane next to p1"},
 		{"the arranged pane", func(r row) bool { return r.self },
-			"→ back to layout mode"},
+			"back to layout mode"},
 		{"new tab here", func(r row) bool { return r.kind == rowNewTabHere },
-			"→ new tab in this workspace"},
+			"new tab here"},
 		{"new workspace", func(r row) bool { return r.kind == rowNewWorkspace },
-			"→ move this pane to a new workspace"},
+			"move this pane to a new workspace"},
 	}
 
 	for _, c := range cases {
 		t.Run(c.what, func(t *testing.T) {
-			got := selectRow(t, m, c.what, c.match).treePreview()
-			if got != c.want {
+			m := selectRow(t, m, c.what, c.match)
+			if got := m.treePreview(); got != c.want {
 				t.Errorf("preview is %q, want %q", got, c.want)
+			}
+
+			line := lines(m)[m.cursor-m.vp.YOffset]
+			if !strings.HasPrefix(line, " ▸ ") || !strings.Contains(line, "← "+c.want) {
+				t.Errorf("the selected line reads %q, want %q beside the cursor", line, c.want)
+			}
+			// And nowhere else: one preview per view, on the row it is about.
+			if n := strings.Count(plain(m.View()), "←"); n != 1 {
+				t.Errorf("%d previews on screen:\n%s", n, plain(m.View()))
 			}
 		})
 	}
@@ -224,7 +234,7 @@ func TestTreeSinglePaneTabHasNoLayoutToShow(t *testing.T) {
 			if m.status != "this tab has only one pane" {
 				t.Errorf("status is %q", m.status)
 			}
-			if got := m.treePreview(); got != "→ this is the pane you are moving" {
+			if got := m.treePreview(); got != "the pane you are moving" {
 				t.Errorf("preview is %q", got)
 			}
 		})
@@ -273,10 +283,10 @@ func TestTreeShortcutsActWithoutNavigating(t *testing.T) {
 // trees, so the selection has to drag the viewport along.
 func TestTreeScrollsToKeepTheCursorVisible(t *testing.T) {
 	f := newFakeClient(evenFour())
-	m := send(t, start(t, f, ModeTree), sizeMsg(66, 9)) // room for four rows
+	m := send(t, start(t, f, ModeTree), sizeMsg(66, 9)) // room for five rows
 
-	if m.vp.Height != 4 {
-		t.Fatalf("viewport height is %d, want 4", m.vp.Height)
+	if m.vp.Height != 5 {
+		t.Fatalf("viewport height is %d, want 5", m.vp.Height)
 	}
 
 	visible := func(m Model) bool {
@@ -323,6 +333,26 @@ func TestTreeSelectionSurvivesAReload(t *testing.T) {
 	m = press(t, m, "enter")
 	if m.cursor != was {
 		t.Errorf("the cursor moved from %d to %d", was, m.cursor)
+	}
+}
+
+// TestTreePreviewNeverWrapsARow: the preview shares a line with the row it is about,
+// and a line that wraps costs the tree a row at the bottom of the popup.
+func TestTreePreviewNeverWrapsARow(t *testing.T) {
+	for _, width := range []int{18, 30, 45, 63} {
+		f := newFakeClient(evenFour())
+		m := send(t, start(t, f, ModeTree), sizeMsg(width, 20))
+
+		for i, line := range lines(m) {
+			if got := len([]rune(strings.TrimRight(line, " "))); got > width {
+				t.Errorf("at width %d line %d is %d columns: %q", width, i+1, got, line)
+			}
+		}
+		// Narrow enough and there is nothing worth saying; wide enough and it is said.
+		selected := lines(m)[m.cursor-m.vp.YOffset]
+		if want := width >= 45; strings.Contains(selected, "←") != want {
+			t.Errorf("at width %d the selected row reads %q", width, selected)
+		}
 	}
 }
 

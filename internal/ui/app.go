@@ -90,6 +90,10 @@ type Model struct {
 	// tall the tree is, and so whether the popup has to be reopened for it.
 	pendingTree bool
 
+	// room is how tall a popup herdr has screen for, from the last snapshot. Tree
+	// mode is sized against it, so the UI has to agree with the action about it.
+	room int
+
 	// reopen, when set, is the popup to open in place of this one.
 	reopen *Reopen
 
@@ -299,12 +303,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			return m.failed(msg.err)
 		}
+		m.room = popupRoom(msg.snapshot)
 		m.setRows(buildRows(msg.snapshot, m.eng.PaneID(), m.eng.TabID(), m.eng.WorkspaceID()))
 		if m.pendingTree {
 			// The tree is built, so its height — and with it whether this popup can
 			// hold it — is finally known.
 			m.pendingTree, m.busy = false, false
-			if m.outgrewThePopup(treeSizeForRows(len(m.rows))) {
+			if m.outgrewThePopup(treeSizeForRows(len(m.rows), m.room)) {
 				return m.reopenIn(ModeTree)
 			}
 			m.mode = ModeTree

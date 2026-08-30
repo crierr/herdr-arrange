@@ -167,6 +167,33 @@ func TestCallSendsEmptyParamsObject(t *testing.T) {
 	}
 }
 
+// TestSnapshotDecodesTheTabArea: the area a tab is drawn in is the only thing the
+// API says about the size of the screen, and tree mode's popup is sized from it.
+func TestSnapshotDecodesTheTabArea(t *testing.T) {
+	s := newFakeServer(t, func(_ string, _ map[string]any) (any, *APIError) {
+		return map[string]any{"type": "session_snapshot", "snapshot": map[string]any{
+			"version": "0.8.2", "protocol": 20,
+			"workspaces": []any{}, "tabs": []any{}, "panes": []any{},
+			"layouts": []any{map[string]any{
+				"tab_id": "w1S:t1", "zoomed": false,
+				"area":  map[string]any{"x": 26, "y": 0, "width": 336, "height": 84},
+				"panes": []any{},
+			}},
+		}}, nil
+	})
+
+	snapshot, err := s.client().Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if len(snapshot.Layouts) != 1 {
+		t.Fatalf("layouts = %+v", snapshot.Layouts)
+	}
+	if got := snapshot.Layouts[0].Area; got.Width != 336 || got.Height != 84 {
+		t.Errorf("area = %+v, want 336x84", got)
+	}
+}
+
 func TestCallSurfacesAPIError(t *testing.T) {
 	s := newFakeServer(t, func(_ string, _ map[string]any) (any, *APIError) {
 		return nil, &APIError{Code: "ui_busy", Message: "a dialog is open"}

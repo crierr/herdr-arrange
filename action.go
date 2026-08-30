@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,6 +30,14 @@ const (
 	drainTimeout = 60 * time.Second
 )
 
+// Reopening races the popup we are replacing: our own exit is what closes it, and
+// herdr refuses a second popup until it has. reopenWait is how long we give that,
+// which is generous — the alternative is dropping the user's view on the floor.
+const (
+	reopenWait = 5 * time.Second
+	reopenPoll = 25 * time.Millisecond
+)
+
 // opener is the part of the API an open action uses.
 type opener interface {
 	Snapshot(ctx context.Context) (*herdr.SessionSnapshot, error)
@@ -51,11 +60,7 @@ func runOpen(mode ui.Mode) error {
 	return open(ctx, client, t, mode)
 }
 
-// open decides which view to open on, asks herdr for a popup the right size for
-// it, and hands the pane being arranged to the UI in the popup's environment.
-//
-// The size has to be decided out here: herdr sizes a popup when it opens it, and
-// tree mode's natural height depends on how big the session is.
+// open decides which view to open on and opens the popup on it.
 func open(ctx context.Context, client opener, t target, mode ui.Mode) error {
 	snapshot, err := client.Snapshot(ctx)
 	if err != nil {
@@ -67,14 +72,74 @@ func open(ctx context.Context, client opener, t target, mode ui.Mode) error {
 	if mode == ui.ModeLayout && panesInTab(snapshot, t.TabID) < 2 {
 		mode = ui.ModeTree
 	}
+	if err := openPopup(ctx, client, snapshot, t, mode, ""); err != nil {
+		return notifyOpenFailure(ctx, client, err)
+	}
+	return nil
+}
 
+// runReopen replaces the popup with one of a different size, and is what the UI
+// leaves behind when a view outgrows the popup it is in. herdr can neither resize a
+// popup nor open a second one while the first is up, and the first one closes when
+// the UI process exits — so the replacement has to be opened by something that
+// outlives the UI. This is that something.
+func runReopen() error {
+	t, err := resolveTarget()
+	if err != nil {
+		return err
+	}
+	client, err := herdr.New()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), reopenWait)
+	defer cancel()
+	return reopen(ctx, client, t, t.Mode, os.Getenv("ARRANGE_STATUS"))
+}
+
+// reopen opens the replacement popup, waiting out the one it replaces.
+func reopen(ctx context.Context, client opener, t target, mode ui.Mode, status string) error {
+	snapshot, err := client.Snapshot(ctx)
+	if err != nil {
+		return err
+	}
+	for {
+		err := openPopup(ctx, client, snapshot, t, mode, status)
+		switch {
+		case err == nil:
+			return nil
+		case !notYet(err):
+			return notifyOpenFailure(ctx, client, err)
+		}
+		select {
+		case <-ctx.Done():
+			// The deadline that ran out is also the one that would stop us saying so.
+			return notifyOpenFailure(context.WithoutCancel(ctx), client, err)
+		case <-time.After(reopenPoll):
+		}
+	}
+}
+
+// notYet reports whether a refused popup is worth waiting out rather than reporting:
+// the popup being replaced has not finished closing, and herdr will take ours as
+// soon as it has.
+func notYet(err error) bool {
+	return strings.Contains(err.Error(), "popup already open") || herdr.Code(err) == "ui_busy"
+}
+
+// openPopup asks herdr for a popup the right size for mode, and hands the pane being
+// arranged to the UI in the popup's environment.
+//
+// The size has to be decided out here: herdr sizes a popup when it opens it, and
+// tree mode's natural height depends on how big the session is.
+func openPopup(ctx context.Context, client opener, snapshot *herdr.SessionSnapshot, t target, mode ui.Mode, status string) error {
 	width, height := ui.LayoutPopupSize()
 	if mode == ui.ModeTree {
 		width, height = ui.TreePopupSize(snapshot, t.PaneID, t.TabID, t.WorkspaceID)
 	}
 	outerWidth, outerHeight := herdr.Cells(width), herdr.Cells(height)
 
-	err = client.OpenPopup(ctx, herdr.PopupOptions{
+	return client.OpenPopup(ctx, herdr.PopupOptions{
 		PluginID:   pluginID(),
 		Entrypoint: uiEntrypointID,
 		Width:      &outerWidth,
@@ -85,12 +150,15 @@ func open(ctx context.Context, client opener, t target, mode ui.Mode) error {
 			"ARRANGE_PANE": t.PaneID,
 			"ARRANGE_TAB":  t.TabID,
 			"ARRANGE_WS":   t.WorkspaceID,
+			// What the other view reported on its way out, so a resize does not
+			// swallow it.
+			"ARRANGE_STATUS": status,
+			// The size we asked for, which is how the UI tells a view that has
+			// outgrown its popup from one herdr merely clamped to the terminal.
+			"ARRANGE_POPUP_W": strconv.Itoa(width),
+			"ARRANGE_POPUP_H": strconv.Itoa(height),
 		},
 	})
-	if err != nil {
-		return notifyOpenFailure(ctx, client, err)
-	}
-	return nil
 }
 
 // runDrain is the [[startup]] hook. A rebuild parks panes in a scratch tab and

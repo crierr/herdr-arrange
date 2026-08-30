@@ -25,12 +25,19 @@ func LayoutPopupSize() (width, height int) {
 
 // TreePopupSize is the outer popup size for tree mode: tall enough for the whole
 // session, so the common case needs no scrolling.
-//
-// It is never smaller than layout mode's panel, because `t` switches views inside
-// the same popup and keeps whatever size herdr gave us — a popup opened on a
-// two-row tree should still be able to show the layout help.
 func TreePopupSize(s *herdr.SessionSnapshot, paneID, tabID, workspaceID string) (width, height int) {
+	return treeSizeForRows(len(buildRows(s, paneID, tabID, workspaceID)))
+}
+
+// treeSizeForRows is the outer popup size a tree of n rows wants. The UI needs this
+// too: switching to tree mode reopens the popup when the tree does not fit the one
+// we are in, and by then the rows are all it has.
+//
+// It is never smaller than layout mode's panel. Reopening the popup is the only way
+// to resize it, and that costs a flicker, so a session whose tree fits inside the
+// layout panel is better off asking for the same size and switching views for free.
+func treeSizeForRows(n int) (width, height int) {
 	width, floor := LayoutPopupSize()
-	height = len(buildRows(s, paneID, tabID, workspaceID)) + treeChrome + popupBorderHeight
+	height = n + treeChrome + popupBorderHeight
 	return width, min(max(height, floor), treePopupMaxHeight)
 }

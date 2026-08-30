@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/crierr/herdr-arrange/internal/herdr"
 	"github.com/crierr/herdr-arrange/internal/ui"
@@ -16,6 +18,10 @@ type fakeOpener struct {
 	opened   []herdr.PopupOptions
 	notes    []string
 	openErr  error
+
+	// refuse is how many opens report the popup we are replacing as still open,
+	// which is the race a reopen has to wait out.
+	refuse int
 }
 
 func (f *fakeOpener) Snapshot(context.Context) (*herdr.SessionSnapshot, error) {
@@ -24,6 +30,10 @@ func (f *fakeOpener) Snapshot(context.Context) (*herdr.SessionSnapshot, error) {
 
 func (f *fakeOpener) OpenPopup(_ context.Context, opts herdr.PopupOptions) error {
 	f.opened = append(f.opened, opts)
+	if f.refuse > 0 {
+		f.refuse--
+		return &herdr.APIError{Code: "plugin_pane_open_failed", Message: "popup already open"}
+	}
 	return f.openErr
 }
 
@@ -105,6 +115,86 @@ func TestOpenTellsThePopupWhatToArrange(t *testing.T) {
 	}
 	if opts.Entrypoint != uiEntrypointID || opts.PluginID == "" || !opts.Focus {
 		t.Errorf("popup opened as %+v", opts)
+	}
+}
+
+// TestOpenTellsThePopupWhatSizeItAskedFor: herdr clamps a popup down to the terminal,
+// so the UI cannot work out from its own window whether the view it is switching to
+// would fit a popup of its own. The size we asked for is what it compares against.
+func TestOpenTellsThePopupWhatSizeItAskedFor(t *testing.T) {
+	for _, mode := range []ui.Mode{ui.ModeLayout, ui.ModeTree} {
+		t.Run(modeName(mode), func(t *testing.T) {
+			f := &fakeOpener{snapshot: session(4)}
+			opts := openOne(t, f, mode)
+
+			width, height := ui.LayoutPopupSize()
+			if mode == ui.ModeTree {
+				width, height = ui.TreePopupSize(f.snapshot, "w1S:p1", "w1S:t1", "w1S")
+			}
+			if opts.Env["ARRANGE_POPUP_W"] != strconv.Itoa(width) || opts.Env["ARRANGE_POPUP_H"] != strconv.Itoa(height) {
+				t.Errorf("the popup was told it got %sx%s, but %v x %v was asked for",
+					opts.Env["ARRANGE_POPUP_W"], opts.Env["ARRANGE_POPUP_H"], *opts.Width, *opts.Height)
+			}
+		})
+	}
+}
+
+// TestReopenWaitsForThePopupItReplaces: the UI's own exit is what closes the popup,
+// so the first few attempts at the replacement are expected to bounce. That is a race
+// to wait out, not something to bother the user with.
+func TestReopenWaitsForThePopupItReplaces(t *testing.T) {
+	f := &fakeOpener{snapshot: session(4), refuse: 2}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := reopen(ctx, f, here(), ui.ModeTree, "moved to a new tab"); err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+
+	if len(f.opened) != 3 {
+		t.Errorf("gave up after %d attempts", len(f.opened))
+	}
+	if len(f.notes) != 0 {
+		t.Errorf("a race the user cannot do anything about was reported: %v", f.notes)
+	}
+
+	last := f.opened[len(f.opened)-1]
+	if last.Env["ARRANGE_MODE"] != "tree" || last.Env["ARRANGE_STATUS"] != "moved to a new tab" {
+		t.Errorf("the replacement opened as %v", last.Env)
+	}
+}
+
+// TestReopenGivesUpAndSaysSo: the popup is gone by now either way, so a reopen that
+// cannot happen has to be explained rather than leaving the user with nothing.
+func TestReopenGivesUpAndSaysSo(t *testing.T) {
+	f := &fakeOpener{snapshot: session(4), refuse: 1 << 30}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	err := reopen(ctx, f, here(), ui.ModeLayout, "")
+
+	if err == nil {
+		t.Fatal("reopen reported success")
+	}
+	if len(f.notes) != 1 || !strings.Contains(f.notes[0], "the arrange popup is already open") {
+		t.Errorf("notifications were %v", f.notes)
+	}
+}
+
+// TestReopenOpensTheViewItWasAsked: `open` sends a single-pane tab to the tree because
+// there is no layout to arrange, but a reopen is the UI resizing itself — it has
+// already decided which view it is in, and second-guessing it would change the view
+// under the user as a side effect of a resize.
+func TestReopenOpensTheViewItWasAsked(t *testing.T) {
+	f := &fakeOpener{snapshot: session(1)}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := reopen(ctx, f, here(), ui.ModeLayout, ""); err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	if got := f.opened[0].Env["ARRANGE_MODE"]; got != "layout" {
+		t.Errorf("reopened in %q mode", got)
 	}
 }
 

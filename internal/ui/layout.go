@@ -96,10 +96,8 @@ func (m Model) layoutKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		})
 
 	case "t":
-		m.mode = ModeTree
 		m.status, m.statusKind = "", statusNone
-		m.vp.Height = m.treeViewportHeight()
-		return m, m.reload()
+		return m.switchTo(ModeTree)
 
 	case "enter":
 		m.quitting = true

@@ -267,9 +267,8 @@ func (m Model) treeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.currentTabPanes() < 2 {
 			return m.flashSinglePane()
 		}
-		m.mode = ModeLayout
 		m.status, m.statusKind = "", statusNone
-		return m, m.reload()
+		return m.switchTo(ModeLayout)
 
 	case "c":
 		return m.jump(func(r row) bool { return r.kind == rowNewTabHere })
@@ -342,9 +341,8 @@ func (m Model) act(r row) (tea.Model, tea.Cmd) {
 			if m.currentTabPanes() < 2 {
 				return m.flashSinglePane()
 			}
-			m.mode = ModeLayout
 			m.status, m.statusKind = "", statusNone
-			return m, m.reload()
+			return m.switchTo(ModeLayout)
 
 		case r.sameTab:
 			// A same-tab swap is what the user came for; close afterwards.

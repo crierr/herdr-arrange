@@ -165,6 +165,12 @@ back one at a time in the right order. herdr closes the scratch tab when its las
 leaves. That is the flicker, and it is why a rearrange takes a moment while a swap (`h/j/k/l`)
 or `e` is instant: those two need no restructuring at all.
 
+`t` can blink too, for an unrelated reason. The two views want different-sized popups, and
+herdr has no way to resize one, so switching between them closes the popup and opens a new
+one whenever the size has to change — carrying the pane being arranged, and whatever the last
+action reported, across with it. A session whose tree already fits inside the layout panel
+switches instantly; a bigger one blinks once.
+
 If herdr is killed halfway through one of those plans, the panes are still alive, just in the
 wrong tab. Before parking anything the plugin writes what it is about to do to
 `$HERDR_PLUGIN_STATE_DIR/parking.json`, and its `[[startup]]` hook (`arrange drain`) moves

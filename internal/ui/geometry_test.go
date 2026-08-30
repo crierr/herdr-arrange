@@ -51,9 +51,9 @@ func TestTreePopupSizeShowsTheWholeSession(t *testing.T) {
 	}
 }
 
-// TestTreePopupSizeIsBoundedBothWays: `t` switches views inside the popup we were
-// given, so a tiny tree must not leave layout mode without room — and a huge
-// session must not ask for a popup the height of the screen.
+// TestTreePopupSizeIsBoundedBothWays: a tiny tree asks for layout mode's size rather
+// than its own, so switching views costs nothing — and a huge session must not ask for
+// a popup the height of the screen.
 func TestTreePopupSizeIsBoundedBothWays(t *testing.T) {
 	_, layoutHeight := LayoutPopupSize()
 
@@ -86,6 +86,141 @@ func TestTreePopupSizeIsBoundedBothWays(t *testing.T) {
 	if m.cursor < m.vp.YOffset || m.cursor >= m.vp.YOffset+m.vp.Height {
 		t.Errorf("the cursor at %d is outside rows %d..%d", m.cursor, m.vp.YOffset, m.vp.YOffset+m.vp.Height)
 	}
+}
+
+// popupSized starts the UI the way the action does: in a popup of the size that
+// mode asked for.
+func popupSized(t *testing.T, f *fakeClient, mode Mode) Model {
+	t.Helper()
+
+	width, height := LayoutPopupSize()
+	if mode == ModeTree {
+		width, height = TreePopupSize(f.snapshot, curPane, curTab, curWS)
+	}
+	m := startWith(t, f, Options{Mode: mode, AskedWidth: width, AskedHeight: height})
+	return send(t, m, sizeMsg(inner(width, height)))
+}
+
+// oneTabSession is a session whose tree is short enough to fit layout mode's own
+// popup, which is what lets `t` switch views without reopening anything.
+func oneTabSession(panes ...string) *herdr.SessionSnapshot {
+	s := fixtureSnapshot(panes)
+	s.Workspaces, s.Tabs, s.Panes = s.Workspaces[:1], s.Tabs[:1], s.Panes[:len(panes)]
+	return s
+}
+
+// TestSwitchingViewsReopensThePopupForTheOtherSize is the whole point of Reopen:
+// herdr cannot resize a popup, so a view that does not fit the one we are in gets a
+// new one instead of being squeezed into or lost inside the old one.
+func TestSwitchingViewsReopensThePopupForTheOtherSize(t *testing.T) {
+	for _, c := range []struct {
+		from Mode
+		want Mode
+	}{{ModeLayout, ModeTree}, {ModeTree, ModeLayout}} {
+		t.Run(modeWord(c.want), func(t *testing.T) {
+			f := newFakeClient(evenFour()) // the fixture tree is taller than the layout panel
+			m := press(t, popupSized(t, f, c.from), "t")
+
+			if m.reopen == nil {
+				t.Fatalf("switching to %s kept a popup built for %s", modeWord(c.want), modeWord(c.from))
+			}
+			if m.reopen.Mode != c.want {
+				t.Errorf("the replacement opens in %s", modeWord(m.reopen.Mode))
+			}
+			if !m.quitting {
+				t.Error("the popup stayed open, so its replacement can never open")
+			}
+			// Nothing is drawn at the old size on the way out.
+			if m.View() != "" {
+				t.Errorf("a popup being replaced still drew something:\n%s", plain(m.View()))
+			}
+		})
+	}
+}
+
+// TestSwitchingViewsInAPopupThatFitsBothIsInstant: reopening costs a flicker, so a
+// session small enough that both views fit the popup we already have must not pay it.
+func TestSwitchingViewsInAPopupThatFitsBothIsInstant(t *testing.T) {
+	f := newFakeClient(tree.Split(herdr.Right, 0.5, tree.Leaf(curPane), tree.Leaf("w1S:p1")))
+	f.snapshot = oneTabSession(curPane, "w1S:p1")
+
+	if want, got := sizeOf(LayoutPopupSize()), sizeOf(TreePopupSize(f.snapshot, curPane, curTab, curWS)); want != got {
+		t.Fatalf("this session's tree wants %v, not layout mode's %v: the fixture no longer tests anything", got, want)
+	}
+
+	m := popupSized(t, f, ModeLayout)
+	for _, want := range []Mode{ModeTree, ModeLayout, ModeTree} {
+		m = press(t, m, "t")
+		if m.reopen != nil {
+			t.Fatalf("switching to %s reopened a popup that already fits it", modeWord(want))
+		}
+		if m.mode != want || m.busy {
+			t.Fatalf("mode is %s, busy=%v; want %s", modeWord(m.mode), m.busy, modeWord(want))
+		}
+	}
+}
+
+// TestAHandRunUINeverReopens: run outside a popup there is no popup to replace, and
+// asking for one would put a second copy of the UI on screen.
+func TestAHandRunUINeverReopens(t *testing.T) {
+	f := newFakeClient(evenFour())
+	m := press(t, start(t, f, ModeTree), "t") // start says nothing about a popup size
+
+	if m.reopen != nil || m.quitting {
+		t.Fatalf("reopen=%+v quitting=%v", m.reopen, m.quitting)
+	}
+	if m.mode != ModeLayout {
+		t.Error("the view did not switch")
+	}
+}
+
+// TestAReopenCarriesTheResultOver: an action that switches views is the one that most
+// wants to report what it did, and closing the popup would otherwise take the report
+// with it.
+func TestAReopenCarriesTheResultOver(t *testing.T) {
+	f := newFakeClient(evenFour())
+	m := press(t, popupSized(t, f, ModeTree), "c") // move to a new tab, then arrange it
+
+	if !f.took("move w1S:p2 -> new_tab") {
+		t.Fatalf("calls were: %s", f.log())
+	}
+	if m.reopen == nil {
+		t.Fatal("the popup was not resized for layout mode")
+	}
+	if m.reopen.Status != "moved to a new tab" {
+		t.Errorf("the replacement is told %q", m.reopen.Status)
+	}
+
+	// And the popup that replaces it says so.
+	m = startWith(t, newFakeClient(tree.Leaf(curPane)), Options{Mode: ModeLayout, Status: m.reopen.Status})
+	if m.statusKind != statusInfo {
+		t.Errorf("a carried result is styled as %v", m.statusKind)
+	}
+	if !strings.Contains(plain(m.View()), "moved to a new tab") {
+		t.Errorf("the carried result is not on screen:\n%s", plain(m.View()))
+	}
+}
+
+// TestAClampedPopupIsNotAResize: herdr shrinks a popup to fit the terminal, and a UI
+// that took its own window as the size it asked for would reopen itself forever.
+func TestAClampedPopupIsNotAResize(t *testing.T) {
+	f := newFakeClient(evenFour())
+	width, height := LayoutPopupSize()
+	m := startWith(t, f, Options{Mode: ModeLayout, AskedWidth: width, AskedHeight: height})
+
+	// A terminal with half the room we asked for.
+	m = send(t, m, sizeMsg(width/2, height/2))
+	if m.outgrewThePopup(LayoutPopupSize()) {
+		t.Fatal("the view thinks it has outgrown the popup it was built for")
+	}
+}
+
+// modeWord names a mode for a test message.
+func modeWord(mode Mode) string {
+	if mode == ModeTree {
+		return "tree mode"
+	}
+	return "layout mode"
 }
 
 // TestPopupSizesClearHerdrsMinimum: below 6x4 herdr refuses to open a popup at

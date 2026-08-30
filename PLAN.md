@@ -130,6 +130,7 @@ herdr-arrange/
     layout.go                 # layout mode view + keymap
     tree.go                   # tree-view mode view + keymap (viewport-scrolled)
     geometry.go               # the popup size each view needs, for the action to ask for
+                              #   and for the UI to notice it has outgrown
     theme.go                  # lipgloss styles
   README.md
 ```
@@ -138,9 +139,10 @@ Three processes, one binary:
 
 | invocation | kind | job |
 |---|---|---|
-| `arrange open` | `[[actions]]` | read snapshot → decide initial mode → compute popup size → `plugin.pane.open` with `env: {ARRANGE_MODE, ARRANGE_PANE, ARRANGE_TAB, ARRANGE_WS}` |
+| `arrange open` | `[[actions]]` | read snapshot → decide initial mode → compute popup size → `plugin.pane.open` with `env: {ARRANGE_MODE, ARRANGE_PANE, ARRANGE_TAB, ARRANGE_WS, ARRANGE_STATUS, ARRANGE_POPUP_W, ARRANGE_POPUP_H}` |
 | `arrange open-tree` | `[[actions]]` | same, forced `ARRANGE_MODE=tree` |
 | `arrange ui` | `[[panes]]` popup | the Bubble Tea app |
+| `arrange reopen` | spawned by `ui` | reopen the popup at the other view's size (see below) |
 | `arrange drain` | `[[startup]]` | crash-recovery: drain a leftover parking tab (§7) |
 
 The actions must speak the socket directly: `herdr plugin pane open` has no `popup`
@@ -189,14 +191,36 @@ size, and `internal/ui/geometry.go` derives the outer size from what the views r
 
 - layout mode: `63 x 14`, from the help panel's `60 x 12`.
 - tree mode: the same width, `rows + 5 + 2` tall — the whole session with no scrolling —
-  floored at layout mode's height (`t` switches views inside the popup we were given) and
-  capped at 30 rows. **Not** `min(rows, 80%)` as first planned: nothing in the API reports
-  the terminal size, so the action cannot compute a percentage of it. Oversized cell counts
-  clamp down safely, so the cap is only there to keep a fifty-pane session from asking for
-  the whole screen.
+  floored at layout mode's height and capped at 30 rows. **Not** `min(rows, 80%)` as first
+  planned: nothing in the API reports the terminal size, so the action cannot compute a
+  percentage of it. Oversized cell counts clamp down safely, so the cap is only there to
+  keep a fifty-pane session from asking for the whole screen.
 
 Beyond the cap, and whenever herdr clamps us, **tree mode scrolls** via `bubbles/viewport`
 and layout mode drops help lines from the bottom up.
+
+### Resizing on a mode switch
+
+`t` changes which view is on screen, and the two views want different heights — but herdr
+has **no popup-resize API** (only `popup.close`, `plugin.pane.open`, `plugin.pane.focus`,
+`plugin.pane.close`) and `spawn_popup_command` refuses a second popup while one is open.
+The popup closes when the UI process exits. So a switch that needs a different size is
+close-and-reopen:
+
+1. `Model.switchTo` compares the size the new view needs against `ARRANGE_POPUP_W/H` — the
+   size the action *asked* for, **not** the window we got. herdr clamps a popup down to the
+   terminal, and comparing against the clamped size would reopen forever in a short one.
+2. If it fits, the switch is instant, as before. That is why `TreePopupSize` keeps the floor
+   at layout mode's height: a small session never pays the flicker.
+3. If it does not, `ui.Run` returns a `ui.Reopen{Mode, Status}`, `runUI` spawns
+   `arrange reopen` detached (`Setsid`, no stdio) and exits so herdr closes the popup.
+4. `arrange reopen` retries `plugin.pane.open` every 25ms for 5s while the error is
+   `popup already open` or `ui_busy` — our own exit is the thing it is waiting for — then
+   notifies if it really cannot open one.
+
+The status line travels in `ARRANGE_STATUS`, so "moved to a new workspace" survives the
+popup that reported it. Switching to tree mode waits for the snapshot before deciding, since
+the tree's height is what is being measured; the old view stays on screen until then.
 
 Keybindings are the user's to add (plugins cannot register keys). README will document:
 

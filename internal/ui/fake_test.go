@@ -246,9 +246,18 @@ func toLayout(n *tree.Node) *herdr.LayoutNode {
 // driving the model
 
 // start builds a model, runs its initial load and gives it a popup-sized window.
+// It says nothing about the size the popup was asked for, which is how a hand-run UI
+// starts: switching views then never reopens anything.
 func start(t *testing.T, f *fakeClient, mode Mode) Model {
 	t.Helper()
-	m := New(engine.New(f, "", curPane, curTab, curWS), mode)
+	return startWith(t, f, Options{Mode: mode})
+}
+
+// startWith is start for the tests that care what size the action asked herdr for,
+// which is what decides whether a mode switch reopens the popup.
+func startWith(t *testing.T, f *fakeClient, opts Options) Model {
+	t.Helper()
+	m := New(engine.New(f, "", curPane, curTab, curWS), opts)
 	m = settle(t, m, m.Init())
 	m = send(t, m, tea.WindowSizeMsg{Width: 66, Height: 15})
 	f.calls = nil

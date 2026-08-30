@@ -4,6 +4,11 @@
 // sends the pane to another tab or workspace. Both drive the same engine, and
 // every action re-reads herdr afterwards rather than tracking state locally, so
 // the popup cannot drift from what the user is looking at behind it.
+//
+// The two views need popups of different sizes and herdr cannot resize one, so
+// switching views sometimes means closing this popup and asking for another: Run
+// returns a Reopen saying so, rather than the switch happening in place. See
+// Model.switchTo.
 package ui
 
 import (
@@ -76,40 +81,87 @@ type Model struct {
 	statusKind statusKind
 	busy       bool
 
+	// asked is the outer popup size the action asked herdr for, and what a view
+	// that has outgrown its popup is measured against. Zero when we are not
+	// running in a popup, which means no resizing.
+	askedWidth, askedHeight int
+
+	// pendingTree is a switch to tree mode waiting on the snapshot that says how
+	// tall the tree is, and so whether the popup has to be reopened for it.
+	pendingTree bool
+
+	// reopen, when set, is the popup to open in place of this one.
+	reopen *Reopen
+
 	// fatal ends the session: the pane being arranged no longer exists, so
 	// there is nothing left to act on.
 	fatal    error
 	quitting bool
 }
 
-// New returns a popup model starting in the given mode.
-func New(eng *engine.Engine, mode Mode) Model {
-	return Model{
-		eng:   eng,
-		theme: newTheme(),
-		mode:  mode,
+// Options is what the popup is started with.
+type Options struct {
+	Mode Mode
+
+	// Status is a result carried over from the popup this one replaces, so a
+	// resize does not swallow what the last action reported.
+	Status string
+
+	// AskedWidth and AskedHeight are the outer popup size the action asked herdr
+	// for. herdr clamps a popup down to the terminal, so this — rather than the
+	// size we actually got — is what a resize is decided against: comparing
+	// against the clamped size would reopen the popup forever in a terminal too
+	// short for it. Zero means we are not in a popup and cannot be resized.
+	AskedWidth, AskedHeight int
+}
+
+// Reopen asks the caller to open a fresh popup once this one has closed. herdr has
+// no API for resizing a popup and refuses to open a second one while the first is
+// up, so a view that needs a different size gets there by closing and reopening.
+type Reopen struct {
+	Mode   Mode
+	Status string
+}
+
+// New returns a popup model started with the given options.
+func New(eng *engine.Engine, opts Options) Model {
+	m := Model{
+		eng:         eng,
+		theme:       newTheme(),
+		mode:        opts.Mode,
+		askedWidth:  opts.AskedWidth,
+		askedHeight: opts.AskedHeight,
 		// Sensible until the first WindowSizeMsg arrives.
 		width:  60,
 		height: 16,
 		vp:     viewport.New(60, 8),
 	}
+	if opts.Status != "" {
+		// Only a successful action is ever carried across a resize.
+		m.status, m.statusKind = opts.Status, statusInfo
+	}
+	return m
 }
 
-// Run starts the popup and blocks until the user closes it.
-func Run(eng *engine.Engine, mode Mode) error {
-	final, err := tea.NewProgram(New(eng, mode), tea.WithAltScreen()).Run()
+// Run starts the popup and blocks until the user closes it. A non-nil Reopen means
+// the popup closed only to make room for one of a different size, and the caller is
+// expected to open it: see Model.switchTo.
+func Run(eng *engine.Engine, opts Options) (*Reopen, error) {
+	final, err := tea.NewProgram(New(eng, opts), tea.WithAltScreen()).Run()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	m, ok := final.(Model)
-	if !ok || m.fatal == nil {
-		return nil
-	}
+	switch {
+	case !ok:
+		return nil, nil
 	// A pane closing while the popup is open is ordinary, not a plugin failure.
-	if errors.Is(m.fatal, engine.ErrPaneGone) {
-		return nil
+	case errors.Is(m.fatal, engine.ErrPaneGone):
+		return nil, nil
+	case m.fatal != nil:
+		return nil, m.fatal
 	}
-	return m.fatal
+	return m.reopen, nil
 }
 
 func (m Model) Init() tea.Cmd { return m.reload() }
@@ -137,21 +189,76 @@ type opMsg struct {
 
 // reload fetches whatever the current mode renders.
 func (m Model) reload() tea.Cmd {
-	eng := m.eng
 	if m.mode == ModeTree {
-		return func() tea.Msg {
-			ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
-			defer cancel()
-			snapshot, err := eng.Snapshot(ctx)
-			return snapshotMsg{snapshot: snapshot, err: err}
-		}
+		return m.readSession()
 	}
+	return m.readTab()
+}
+
+// readSession reads the whole session, which is what the tree is built from.
+func (m Model) readSession() tea.Cmd {
+	eng := m.eng
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
+		defer cancel()
+		snapshot, err := eng.Snapshot(ctx)
+		return snapshotMsg{snapshot: snapshot, err: err}
+	}
+}
+
+// readTab reads the tab being arranged, which is what layout mode renders.
+func (m Model) readTab() tea.Cmd {
+	eng := m.eng
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
 		defer cancel()
 		tab, err := eng.Tab(ctx)
 		return tabMsg{tab: tab, err: err}
 	}
+}
+
+// switchTo moves to the other view.
+//
+// The two views want different popup sizes, and herdr can neither resize a popup nor
+// open a second one while the first is up. So a switch into a view that does not fit
+// the popup we were given closes this popup and asks whoever started us to open one
+// the right size; a switch that does fit is instant, which is the common case.
+//
+// The status line is left as it is, so an action that switches views on the way out
+// still gets to report what it did — including across a reopen.
+func (m Model) switchTo(mode Mode) (tea.Model, tea.Cmd) {
+	if mode == ModeTree {
+		// How tall the tree wants to be depends on the session, so the decision has
+		// to wait for the snapshot. Until it lands we keep drawing the view we are
+		// on rather than a half-built tree in a popup we may be about to leave.
+		m.pendingTree = true
+		m.busy = true
+		return m, m.readSession()
+	}
+	if m.outgrewThePopup(LayoutPopupSize()) {
+		return m.reopenIn(mode)
+	}
+	m.mode = mode
+	return m, m.reload()
+}
+
+// outgrewThePopup reports whether a view needing this outer size has to be given a
+// new popup, rather than making do with the one we are in. See Options.AskedWidth.
+func (m Model) outgrewThePopup(width, height int) bool {
+	if m.askedWidth == 0 || m.askedHeight == 0 {
+		return false // not in a popup: there is nothing to reopen
+	}
+	return width != m.askedWidth || height != m.askedHeight
+}
+
+// reopenIn closes the popup, leaving behind a request for one the right size for
+// mode. The status line goes with it, because "moved to a new workspace" is worth
+// more than the popup that reported it.
+func (m Model) reopenIn(mode Mode) (tea.Model, tea.Cmd) {
+	m.reopen = &Reopen{Mode: mode, Status: m.status}
+	m.busy, m.pendingTree = false, false
+	m.quitting = true
+	return m, tea.Quit
 }
 
 // op runs an action off the update loop. fn returns the status line to show on
@@ -193,6 +300,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.failed(msg.err)
 		}
 		m.setRows(buildRows(msg.snapshot, m.eng.PaneID(), m.eng.TabID(), m.eng.WorkspaceID()))
+		if m.pendingTree {
+			// The tree is built, so its height — and with it whether this popup can
+			// hold it — is finally known.
+			m.pendingTree, m.busy = false, false
+			if m.outgrewThePopup(treeSizeForRows(len(m.rows))) {
+				return m.reopenIn(ModeTree)
+			}
+			m.mode = ModeTree
+			m.vp.Height = m.treeViewportHeight()
+			m.syncViewport()
+		}
 		return m, nil
 
 	case opMsg:
@@ -253,15 +371,14 @@ func (m Model) finished(msg opMsg) (tea.Model, tea.Cmd) {
 		return m, m.reload()
 	}
 
-	if msg.next == nextQuit {
+	switch msg.next {
+	case nextQuit:
 		m.quitting = true
 		return m, tea.Quit
-	}
-	switch msg.next {
 	case nextLayout:
-		m.mode = ModeLayout
+		return m.switchTo(ModeLayout)
 	case nextTree:
-		m.mode = ModeTree
+		return m.switchTo(ModeTree)
 	}
 	if m.mode == ModeTree {
 		m.vp.Height = m.treeViewportHeight()

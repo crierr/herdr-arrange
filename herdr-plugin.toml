@@ -1,9 +1,12 @@
 id = "herdr-arrange"
 name = "Arrange"
 version = "0.1.0"
-description = "Interactive pane move, swap, re-split and layout"
+description = "Rearrange panes from a popup: swap, re-split, resize, presets, cross-tab moves"
 
 # popup placement for plugin panes landed in 0.7.4; layout.set_split_ratio in 0.7.2.
+# The geometry and resize methods the popup draws its map from (pane.layout,
+# pane.resize) shipped in 0.6.9 alongside the directional pane.swap, so they are
+# already covered and do not raise this floor.
 min_herdr_version = "0.7.4"
 
 # Windows would need a named-pipe transport for the socket, and the layout methods
@@ -24,14 +27,14 @@ command = ["bin/arrange", "drain"]
 [[actions]]
 id = "open"
 title = "Arrange panes"
-description = "Move, swap, re-split and lay out the panes of this tab"
+description = "Swap, re-split, resize and lay out the panes of this tab"
 contexts = ["pane"]
 command = ["bin/arrange", "open"]
 
 [[actions]]
 id = "open-tree"
 title = "Arrange: move pane to…"
-description = "Send this pane to another tab or workspace"
+description = "Send this pane to another tab or workspace, or swap it with any pane"
 contexts = ["pane"]
 command = ["bin/arrange", "open-tree"]
 
@@ -47,5 +50,5 @@ id = "ui"
 title = "Arrange"
 placement = "popup"
 width = 63
-height = 14
+height = 23
 command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/bin/arrange\" ui"]

@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/rand"
 	"os"
 	"strings"
@@ -395,18 +396,176 @@ func TestMoveToTabMovesAcrossWorkspaces(t *testing.T) {
 	}
 }
 
-func TestSwapWithPane(t *testing.T) {
+func TestMoveBesidePaneInAnotherTabIsOneMove(t *testing.T) {
+	fake := newFakeHerdr().withTab("w1", r(leaf("p1"), leaf("p2")))
+	fake.withTab("w1", r(leaf("q1"), leaf("q2")))
+	eng := New(fake, t.TempDir(), "p2", "w1:t1", "w1")
+
+	if err := eng.MoveBesidePane(context.Background(), "w1:t2", "q2"); err != nil {
+		t.Fatalf("MoveBesidePane: %v", err)
+	}
+	if got := fake.treeOf("w1:t2").String(); got != "[q1 | [q2 | p2]]" {
+		t.Errorf("destination tab = %s, want [q1 | [q2 | p2]]", got)
+	}
+	if got := fake.treeOf("w1:t1").String(); got != "p1" {
+		t.Errorf("source tab = %s, want p1", got)
+	}
+}
+
+// TestMoveBesidePaneInItsOwnTabRebuilds: herdr refuses a pane.move into the tab the
+// pane is already in, so landing beside a neighbour goes through the planner.
+func TestMoveBesidePaneInItsOwnTabRebuilds(t *testing.T) {
+	fake, eng, _ := setup(t, r(r(leaf("p1"), leaf("p2")), r(leaf("p3"), leaf("p4"))), "p2")
+
+	if err := eng.MoveBesidePane(context.Background(), eng.TabID(), "p4"); err != nil {
+		t.Fatalf("MoveBesidePane: %v", err)
+	}
+	if got := fake.treeOf(eng.TabID()).String(); got != "[p1 | [p3 | [p4 | p2]]]" {
+		t.Errorf("tab = %s, want [p1 | [p3 | [p4 | p2]]]", got)
+	}
+	// And every pane survived the trip through the parking tab.
+	if n := len(fake.treeOf(eng.TabID()).Leaves()); n != 4 {
+		t.Errorf("the tab has %d panes, want 4", n)
+	}
+
+	// Beside itself is nothing to do, and costs no API call.
+	before := len(fake.calls)
+	if err := eng.MoveBesidePane(context.Background(), eng.TabID(), eng.PaneID()); !errors.Is(err, tree.ErrNoChange) {
+		t.Errorf("beside itself: err = %v, want ErrNoChange", err)
+	}
+	if len(fake.calls) != before {
+		t.Errorf("a no-op move should not call the API: %v", fake.calls[before:])
+	}
+}
+
+// TestSwapWithPaneInThisTabIsOneCall: inside a tab herdr swaps two panes itself,
+// which is the whole operation — nothing is moved, so nothing can flicker.
+func TestSwapWithPaneInThisTabIsOneCall(t *testing.T) {
 	fake, eng, _ := setup(t, r(leaf("p1"), d(leaf("p2"), leaf("p3"))), "p1")
 
-	if err := eng.SwapWithPane(context.Background(), "p3"); err != nil {
+	if err := eng.SwapWithPane(context.Background(), eng.TabID(), "p3"); err != nil {
 		t.Fatalf("SwapWithPane: %v", err)
 	}
 	if got := fake.treeOf(eng.TabID()).String(); got != "[p3 | [p2 / p1]]" {
 		t.Errorf("tab = %s, want [p3 | [p2 / p1]]", got)
 	}
+	if got := fake.callLog(); got != "swap p1 p3" {
+		t.Errorf("calls were:\n%s\nwant one swap", got)
+	}
 
-	if err := eng.SwapWithPane(context.Background(), eng.PaneID()); !errors.Is(err, tree.ErrNoChange) {
+	// An empty tab id means this pane's own tab, which is the same path.
+	if err := eng.SwapWithPane(context.Background(), "", "p3"); err != nil {
+		t.Fatalf("SwapWithPane with no tab id: %v", err)
+	}
+	if got := fake.treeOf(eng.TabID()).String(); got != "[p1 | [p2 / p3]]" {
+		t.Errorf("tab = %s, want the swap undone", got)
+	}
+
+	if err := eng.SwapWithPane(context.Background(), eng.TabID(), eng.PaneID()); !errors.Is(err, tree.ErrNoChange) {
 		t.Errorf("swapping with itself: err = %v, want ErrNoChange", err)
+	}
+}
+
+// TestSwapWithPaneInAnotherTabTradesPlaces: herdr's pane.swap refuses to cross a
+// tab boundary, so the engine builds the exchange out of moves around a stand-in
+// pane. The point of the stand-in is that each pane inherits the other's slot at
+// the other's ratio, which is what the ratios here pin down.
+func TestSwapWithPaneInAnotherTabTradesPlaces(t *testing.T) {
+	fake := newFakeHerdr().withTab("w1", tree.Split(herdr.Right, 0.25, leaf("p1"), leaf("p2")))
+	fake.withTab("w1", tree.Split(herdr.Down, 0.3, leaf("q1"), leaf("q2")))
+	eng := New(fake, t.TempDir(), "p2", "w1:t1", "w1")
+
+	if err := eng.SwapWithPane(context.Background(), "w1:t2", "q2"); err != nil {
+		t.Fatalf("SwapWithPane: %v", err)
+	}
+	if got := fmt.Sprintf("%#v", fake.treeOf("w1:t1")); got != "[p1 |0.25 q2]" {
+		t.Errorf("this tab = %s, want [p1 |0.25 q2]", got)
+	}
+	if got := fmt.Sprintf("%#v", fake.treeOf("w1:t2")); got != "[q1 /0.30 p2]" {
+		t.Errorf("the other tab = %s, want [q1 /0.30 p2]", got)
+	}
+	// The stand-in was closed, and took nothing with it.
+	if got := fake.allPanes(); len(got) != 4 {
+		t.Errorf("the session holds %v, want the original four panes", got)
+	}
+	if eng.TabID() != "w1:t2" {
+		t.Errorf("the engine tracks the pane in %s, want w1:t2", eng.TabID())
+	}
+	// And the user is left in the pane they were arranging, not wherever the last
+	// call happened to leave focus.
+	if fake.focused != "p2" {
+		t.Errorf("focus is on %s, want p2", fake.focused)
+	}
+}
+
+// TestSwapWithPaneKeepsAOnePaneTabAlive is the case that needs the stand-in: herdr
+// closes a tab when its last pane leaves, so without something holding the tab open
+// there would be nowhere for the other pane to come back to.
+func TestSwapWithPaneKeepsAOnePaneTabAlive(t *testing.T) {
+	fake := newFakeHerdr().withTab("w1", leaf("p1"))
+	fake.withTab("w1", tree.Split(herdr.Right, 0.4, leaf("q1"), leaf("q2")))
+	eng := New(fake, t.TempDir(), "p1", "w1:t1", "w1")
+
+	if err := eng.SwapWithPane(context.Background(), "w1:t2", "q1"); err != nil {
+		t.Fatalf("SwapWithPane: %v", err)
+	}
+	if got := fmt.Sprintf("%#v", fake.treeOf("w1:t1")); got != "q1" {
+		t.Errorf("this tab = %s, want q1 alone in it", got)
+	}
+	if got := fmt.Sprintf("%#v", fake.treeOf("w1:t2")); got != "[p1 |0.40 q2]" {
+		t.Errorf("the other tab = %s, want [p1 |0.40 q2]", got)
+	}
+	if got := fake.liveTabs(); len(got) != 2 {
+		t.Errorf("tabs are %v, want both still open", got)
+	}
+}
+
+// TestSwapWithPaneClosesTheStandInWhenAMoveFails: the stand-in is an empty shell in
+// a tab the user did not ask for one in, so it must not outlive the swap however the
+// swap ends.
+func TestSwapWithPaneClosesTheStandInWhenAMoveFails(t *testing.T) {
+	// The calls are: split, rename, this pane's move, the other pane's move.
+	cases := []struct {
+		what      string
+		failAfter int
+		wantTabs  [2]string
+		half      bool
+	}{
+		// Nothing has moved yet, so the tabs are as they were.
+		{"sending this pane out", 3, [2]string{"[p1 | p2]", "[q1 | q2]"}, false},
+		// This pane is beside the target and staying there, which is a move rather
+		// than a swap: the error has to say which half happened.
+		{"bringing the other pane back", 4, [2]string{"p1", "[q1 | [q2 | p2]]"}, true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.what, func(t *testing.T) {
+			fake := newFakeHerdr().withTab("w1", r(leaf("p1"), leaf("p2")))
+			fake.withTab("w1", r(leaf("q1"), leaf("q2")))
+			eng := New(fake, t.TempDir(), "p2", "w1:t1", "w1")
+			fake.failAfter = c.failAfter
+
+			err := eng.SwapWithPane(context.Background(), "w1:t2", "q2")
+			if err == nil {
+				t.Fatal("SwapWithPane reported success after a failed move")
+			}
+			if got := strings.Contains(err.Error(), "could not bring it back"); got != c.half {
+				t.Errorf("error is %q; half done = %v, want %v", err, got, c.half)
+			}
+			// The stand-in was closed on the way out either way: it is an empty shell
+			// in a tab the user did not ask for one in.
+			if !strings.Contains(fake.callLog(), "close w1:p100") {
+				t.Errorf("the stand-in was left open; calls were:\n%s", fake.callLog())
+			}
+			if got := fake.allPanes(); len(got) != 4 {
+				t.Errorf("the session holds %v, want the original four panes", got)
+			}
+			for i, tabID := range []string{"w1:t1", "w1:t2"} {
+				if got := fake.treeOf(tabID).String(); got != c.wantTabs[i] {
+					t.Errorf("%s = %s, want %s", tabID, got, c.wantTabs[i])
+				}
+			}
+		})
 	}
 }
 

@@ -56,7 +56,7 @@ type rowKind int
 const (
 	rowWorkspace    rowKind = iota // make a new tab in this workspace
 	rowTab                         // move the pane into this tab
-	rowPane                        // swap with, or move beside, this pane
+	rowPane                        // move beside this pane, or swap with it
 	rowNewTabHere                  // make a new tab in the current workspace
 	rowNewWorkspace                // make a new workspace
 )
@@ -149,15 +149,28 @@ func buildRows(s *herdr.SessionSnapshot, paneID, tabID, workspaceID string) []ro
 			// The current workspace gets a trailing "new tab" row, so its last
 			// tab is not the last child.
 			lastTab := j == len(tabs)-1 && !here
-			rows = append(rows, row{
+			tabName := tab.Label
+			if tabName == "" {
+				tabName = shortID(tab.TabID)
+			}
+			t := row{
 				kind:        rowTab,
 				branch:      branch(lastTab),
 				label:       join(shortID(tab.TabID), tab.Label),
+				name:        tabName,
 				detail:      panesWord(tab.PaneCount),
 				workspaceID: ws.WorkspaceID,
 				tabID:       tab.TabID,
 				dim:         tab.TabID == tabID,
-			})
+			}
+			if t.dim {
+				// The tree opens folded to the tabs, where the pane's own row is not
+				// on screen to say where it lives. Dimming alone does not find it in a
+				// column of tabs — a dim row reads as one more row — so the tab the
+				// pane is in is marked the same way the pane is.
+				t.note = "(current)"
+			}
+			rows = append(rows, t)
 
 			indent := "│  "
 			if lastTab {
@@ -315,6 +328,15 @@ func (m Model) renderRow(r row, selected bool) string {
 		text, keyStyle = t.dim, t.dim
 	}
 
+	// And it is bold. The cursor is one thin mark at the left edge of a list of
+	// near-identical rows; weight on the row's own words is what the eye finds.
+	emph := func(s lipgloss.Style) lipgloss.Style {
+		if selected {
+			return s.Bold(true)
+		}
+		return s
+	}
+
 	// A left margin, then the selection marker: the box-drawing prefixes read badly
 	// against the popup's border.
 	indent := treeIndent
@@ -332,12 +354,12 @@ func (m Model) renderRow(r row, selected bool) string {
 	if r.shortcut != "" {
 		body += keyStyle.Render("["+r.shortcut+"]") + " "
 	}
-	body += text.Render(r.label)
+	body += emph(text).Render(r.label)
 	if r.detail != "" {
-		body += t.dim.Render("  " + r.detail)
+		body += emph(t.dim).Render("  " + r.detail)
 	}
 	if r.note != "" {
-		body += "  " + t.note.Render(r.note)
+		body += "  " + emph(t.note).Render(r.note)
 	}
 	if selected {
 		body += m.previewSuffix(indent + lipgloss.Width(body))
@@ -395,6 +417,12 @@ func (m Model) treeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		if m.cursor < len(m.rows) {
 			return m.act(m.rows[m.cursor])
+		}
+		return m, nil
+
+	case "s":
+		if m.cursor < len(m.rows) {
+			return m.swapWith(m.rows[m.cursor])
 		}
 		return m, nil
 
@@ -490,8 +518,7 @@ func (m Model) act(r row) (tea.Model, tea.Cmd) {
 		})
 
 	case rowPane:
-		switch {
-		case r.self:
+		if r.self {
 			// Per spec: the current pane leads back to layout mode, and does
 			// nothing at all when there is no layout to arrange.
 			if m.currentTabPanes() < 2 {
@@ -499,23 +526,66 @@ func (m Model) act(r row) (tea.Model, tea.Cmd) {
 			}
 			m.status, m.statusKind = "", statusNone
 			return m.switchTo(ModeLayout)
+		}
+		// Every other pane is somewhere to land, in this tab as much as in another
+		// one: one row kind, one meaning. Trading places with it instead is `s` —
+		// see swapWith.
+		tabID, target := r.tabID, r.paneID
+		return m, m.op(nextLayout, func(ctx context.Context) (string, error) {
+			return "moved next to " + shortID(target), eng.MoveBesidePane(ctx, tabID, target)
+		})
+	}
+	return m, nil
+}
 
-		case r.sameTab:
-			// A same-tab swap is what the user came for; close afterwards.
-			target := r.paneID
-			return m, m.op(nextQuit, func(ctx context.Context) (string, error) {
-				return "", eng.SwapWithPane(ctx, target)
-			})
+// swapWith handles `s`: the two panes trade places, each taking the other's slot at
+// the other's size, where enter would move this pane beside the other one.
+//
+// It is a key of its own rather than what enter does on a pane row, because a tree
+// of panes should not mean one thing in this tab and another everywhere else. It
+// works on any pane in the session — see engine.SwapWithPane, which trades across a
+// tab boundary that herdr's own pane.swap will not cross.
+//
+// A tab row stands for the first pane in it, the way enter on a tab stands for
+// "into that tab": swapping with a tab you have not unfolded is a reasonable thing
+// to mean, and the first pane is the one the tree would show you under it.
+func (m Model) swapWith(r row) (tea.Model, tea.Cmd) {
+	if r.kind == rowTab {
+		first, ok := m.firstPaneOf(r.tabID)
+		if !ok {
+			return m.flash("that tab has no pane to swap with")
+		}
+		r = first
+	}
+	switch {
+	case r.kind != rowPane:
+		return m.flash("select a pane or a tab to swap with")
+	case r.self:
+		return m.flash("select another pane to swap with")
+	}
 
-		default:
-			// pane.swap cannot cross tabs, so selecting a pane elsewhere puts
-			// this pane next to it instead.
-			tabID, target := r.tabID, r.paneID
-			return m, m.op(nextLayout, func(ctx context.Context) (string, error) {
-				return "moved next to " + shortID(target), eng.MoveToTabBeside(ctx, tabID, target)
-			})
+	eng, tabID, target := m.eng, r.tabID, r.paneID
+	// A swap is the whole request — both panes are placed when it lands, with
+	// nothing left to arrange — so the popup closes afterwards.
+	return m, m.op(nextQuit, func(ctx context.Context) (string, error) {
+		return "", eng.SwapWithPane(ctx, tabID, target)
+	})
+}
+
+// firstPaneOf returns a tab's first pane row, which is the one drawn directly under
+// the tab when the tree is unfolded.
+func (m Model) firstPaneOf(tabID string) (row, bool) {
+	for _, r := range m.rows {
+		if r.kind == rowPane && r.tabID == tabID {
+			return r, true
 		}
 	}
+	return row{}, false
+}
+
+// flash says why a key did nothing, without treating it as a failure.
+func (m Model) flash(why string) (tea.Model, tea.Cmd) {
+	m.status, m.statusKind = why, statusFlash
 	return m, nil
 }
 
@@ -534,9 +604,11 @@ func (m Model) currentTabPanes() int {
 // treePreview states exactly what enter will do, which is the only way a tree of
 // mixed row kinds stays predictable.
 //
-// It reads as an annotation of the selected row, because that is where it is drawn:
-// a workspace row says "new tab here" rather than naming the workspace the row is
-// already named after — which also keeps it short enough to fit beside the row.
+// Every line starts with the verb — "move to …" — because that is the one thing the
+// tree does, and reading down a column of them says where each row would send the
+// pane. It reads as an annotation of the row it is drawn on, so it names the
+// destination the way the row does and leaves out "this pane", which is the only
+// pane in play: that is also what keeps it short enough to sit beside the row.
 func (m Model) treePreview() string {
 	if len(m.rows) == 0 || m.cursor >= len(m.rows) {
 		return "reading the session…"
@@ -544,25 +616,32 @@ func (m Model) treePreview() string {
 
 	r := m.rows[m.cursor]
 	switch r.kind {
-	case rowWorkspace, rowNewTabHere:
-		return "new tab here"
+	case rowWorkspace:
+		// Both make a tab, but only in another workspace is the workspace the news;
+		// in this one the tab is, which is what the [c] row below it also says.
+		if r.workspaceID == m.eng.WorkspaceID() {
+			return "move to a new tab"
+		}
+		return "move to workspace " + r.name
+	case rowNewTabHere:
+		return "move to a new tab"
 	case rowNewWorkspace:
-		return "move this pane to a new workspace"
+		return "move to a new workspace"
 	case rowTab:
 		if r.tabID == m.eng.TabID() {
-			return "this pane is already in " + shortID(r.tabID)
+			return "already in tab " + r.name
 		}
-		return "move this pane to " + shortID(r.tabID)
+		return "move to tab " + r.name
 	case rowPane:
 		switch {
 		case r.self && m.currentTabPanes() > 1:
 			return "back to layout mode"
 		case r.self:
 			return "the pane you are moving"
-		case r.sameTab:
-			return "swap this pane with " + shortID(r.paneID)
 		default:
-			return "move this pane next to " + shortID(r.paneID)
+			// Both keys, on the row they act on: any pane is somewhere to land, and
+			// the same pane is someone to trade places with.
+			return "move next to " + shortID(r.paneID) + ", press s to swap"
 		}
 	}
 	return ""
@@ -579,8 +658,8 @@ func (m Model) treeView() string {
 	return strings.Join([]string{
 		m.vp.View(),
 		t.rules(m.width),
-		" " + strings.Join([]string{kv("j/k", "move"), kv("h/l", "fold"), kv("enter", "apply"), kv("t", "layout"), kv("esc", "close")}, "  "),
-		" " + strings.Join([]string{kv("c", "new tab here"), kv("1-9", "workspace"), kv("N", "new workspace")}, "  "),
+		" " + strings.Join([]string{kv("j/k", "move"), kv("h/l", "fold"), kv("enter", "apply"), kv("s", "swap"), kv("esc", "close")}, "  "),
+		" " + strings.Join([]string{kv("c", "new tab here"), kv("1-9", "workspace"), kv("N", "new workspace"), kv("t", "layout")}, "  "),
 		" " + m.message(),
 	}, "\n")
 }

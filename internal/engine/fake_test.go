@@ -397,6 +397,53 @@ func (f *fakeHerdr) MovePane(_ context.Context, paneID string, dest herdr.Destin
 	return res, nil
 }
 
+// SplitPane divides a pane's slot in two, the new pane taking the second half —
+// herdr's own split_at makes the existing pane the first child, as pane.move does.
+func (f *fakeHerdr) SplitPane(_ context.Context, targetPaneID string, split herdr.SplitDirection, ratio float64) (*herdr.PaneInfo, error) {
+	if err := f.track("split %s %s %.2f", targetPaneID, split, ratio); err != nil {
+		return nil, err
+	}
+	t := f.tabOf(targetPaneID)
+	if t == nil {
+		return nil, &herdr.APIError{Code: "not_found", Message: "no such pane " + targetPaneID}
+	}
+	// A fresh pane, named the way herdr names one: scoped to the workspace it is in.
+	id := fmt.Sprintf("%s:p%d", t.workspaceID, f.nextPane)
+	f.nextPane++
+	t.root = tree.Insert(t.root, targetPaneID, id, split, tree.Clamp(ratio))
+	return &herdr.PaneInfo{PaneID: id, TabID: t.id, WorkspaceID: t.workspaceID, TerminalID: "term-" + id}, nil
+}
+
+// ClosePane removes a pane, collapsing its slot onto its sibling and closing the
+// tab if it was the last one — which is what makes the stand-in trick work.
+func (f *fakeHerdr) ClosePane(_ context.Context, paneID string) error {
+	if err := f.track("close %s", paneID); err != nil {
+		return err
+	}
+	t := f.tabOf(paneID)
+	if t == nil {
+		return &herdr.APIError{Code: "not_found", Message: "no such pane " + paneID}
+	}
+	t.root = tree.Remove(t.root, paneID)
+	if t.root == nil {
+		f.dropTab(t)
+	}
+	if f.focused == paneID {
+		f.focused = ""
+	}
+	return nil
+}
+
+func (f *fakeHerdr) RenamePane(_ context.Context, paneID, label string) error {
+	if err := f.track("rename %s %q", paneID, label); err != nil {
+		return err
+	}
+	if f.tabOf(paneID) == nil {
+		return &herdr.APIError{Code: "not_found", Message: "no such pane " + paneID}
+	}
+	return nil
+}
+
 func (f *fakeHerdr) SetSplitRatio(_ context.Context, tabID string, path []bool, ratio float64) error {
 	if err := f.track("ratio %s %v = %.2f", tabID, path, ratio); err != nil {
 		return err

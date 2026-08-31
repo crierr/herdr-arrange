@@ -140,6 +140,37 @@ func (c *Client) MovePane(ctx context.Context, paneID string, dest Destination, 
 	return &out.Move, nil
 }
 
+// SplitPane splits a pane and returns the new pane that appears beside it,
+// running a fresh shell. Nothing already on screen moves between tabs: the
+// target's slot is divided in two.
+func (c *Client) SplitPane(ctx context.Context, targetPaneID string, split SplitDirection, ratio float64) (*PaneInfo, error) {
+	var out struct {
+		Pane PaneInfo `json:"pane"`
+	}
+	params := map[string]any{
+		"target_pane_id": targetPaneID,
+		"direction":      string(split),
+		"ratio":          ratio,
+		"focus":          false,
+	}
+	if err := c.Call(ctx, "pane.split", params, &out); err != nil {
+		return nil, err
+	}
+	return &out.Pane, nil
+}
+
+// ClosePane closes a pane, killing whatever is running in it. The pane's slot
+// collapses onto its sibling, and a tab whose last pane closes closes with it.
+func (c *Client) ClosePane(ctx context.Context, paneID string) error {
+	return c.Call(ctx, "pane.close", map[string]any{"pane_id": paneID}, nil)
+}
+
+// RenamePane sets a pane's label, which is what herdr and this plugin display
+// beside its id.
+func (c *Client) RenamePane(ctx context.Context, paneID, label string) error {
+	return c.Call(ctx, "pane.rename", map[string]any{"pane_id": paneID, "label": label}, nil)
+}
+
 // FocusPane focuses a pane, and by extension its tab and workspace.
 func (c *Client) FocusPane(ctx context.Context, paneID string) error {
 	return c.Call(ctx, "pane.focus", map[string]any{"pane_id": paneID}, nil)

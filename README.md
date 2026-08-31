@@ -137,26 +137,56 @@ is instant and never resizes anything.
 Folding a row away moves the cursor to its parent but remembers the row itself, so
 unfolding lands back on it rather than at the top of the tree.
 
+Where the pane lives now is dimmed and marked `(current)` — the tab as well as the pane,
+since the tree opens folded to the tabs, where the pane's own row is not on screen and one
+dim row among tabs reads as just another row.
+
 `j`/`k` and the arrows move; `g`/`G`, `home`/`end`, `pgup`/`pgdown` and `ctrl+f`/`b`/`d`/`u`
 work too. `1`–`9` jump straight to a workspace's action, `c` and `N` to the two synthetic
-rows at the bottom — all of them at any fold level. The selected row says exactly what
-`enter` will do, next to the row it would do it to:
+rows at the bottom — all of them at any fold level. The selected row is drawn in bold and
+says exactly what `enter` will do, next to the row it would do it to:
 
-| selected row | `enter` |
-|---|---|
-| a workspace | move this pane to a new tab in that workspace, then arrange it there |
-| a tab | move this pane into that tab, then arrange it there |
-| a pane in this tab | swap the two panes, and close |
-| a pane in another tab | move this pane next to that one, then arrange it there |
-| the pane you are moving | back to layout mode |
+| selected row | `enter` | `s` |
+|---|---|---|
+| a workspace | move this pane to a new tab in that workspace, then arrange it there | — |
+| a tab | move this pane into that tab, then arrange it there | trade places with its first pane |
+| a pane | move this pane next to that one, then arrange it there | trade places with it |
+| the pane you are moving | back to layout mode | — |
 
 A pane arriving in a tab lands to the *right* of the pane it was sent to, since a terminal
 has width to spare where half its height often will not hold a usable pane. Layout mode is
 opened on the destination afterwards, so `H/J/K/L` or a preset can put it somewhere else.
 
-A pane in another tab is offered as somewhere to *land*, not as a swap, because herdr's
-`pane.swap` cannot cross a tab boundary — and a swap that killed a terminal to fake it
-would be worse than being told what will actually happen.
+A pane row means the same thing wherever it is — somewhere to *land* — including in the tab
+you are already in, where the pane is lifted out of the split tree and put back beside the
+one you picked.
+
+`s` swaps with it instead of landing beside it: the two panes **trade places**, each taking
+the other's slot at the other's size, and the popup closes. It works on any pane in the
+session, and on a tab row it means the first pane in that tab — the one unfolding would show
+you first.
+
+Inside one tab that is a single `pane.swap`: instant, no flicker, which is why the selected
+row advertises it where landing beside a neighbour has to rebuild the tab (see below).
+
+Across tabs herdr will not swap at all — `pane.swap` rewrites one tab's split tree and
+refuses anything else with `cross_tab` — so the exchange is built out of moves around a
+**stand-in pane**:
+
+```
+                     this tab          the other tab
+split off a stand-in [A | tmp]         [B]
+send A beside B      [tmp]             [B | A]
+bring B beside tmp   [tmp | B]         [A]
+close tmp            [B]               [A]
+```
+
+A two-way split collapses onto whichever pane is left, so each pane inherits the other's
+slot *and* the other's ratio exactly. The stand-in earns its keep in the awkward case too:
+when A is the only pane in its tab, it is what holds that tab open while A is away — herdr
+would otherwise close the tab as A left, leaving B nowhere to come back to. The cost is a
+shell spawned and killed and five calls where a same-tab swap is one, so a cross-tab swap
+blinks and a local one does not.
 
 ## Why a tab flashes past sometimes
 
@@ -165,9 +195,9 @@ which would kill whatever is running in them, and `pane.move` back into the same
 refused. What *is* safe is moving a pane between tabs: that keeps the pane id, the terminal
 and the process.
 
-So a re-split or a preset — anything that changes the tab's shape rather than just its
-ratios — is done by parking panes in a scratch tab called `arrange:parking` and moving them
-back one at a time in the right order. herdr closes the scratch tab when its last pane
+So a re-split, a preset, or landing a pane beside another pane of the same tab — anything
+that changes the tab's shape rather than just its ratios — is done by parking panes in a
+scratch tab called `arrange:parking` and moving them back one at a time in the right order. herdr closes the scratch tab when its last pane
 leaves. That is the flicker, and it is why a rearrange takes a moment while a swap (`h/j/k/l`)
 or `e` is instant: those two need no restructuring at all.
 
@@ -176,6 +206,10 @@ herdr has no way to resize one, so switching between them closes the popup and o
 one whenever the size has to change — carrying the pane being arranged, and whatever the last
 action reported, across with it. A session whose tree already fits inside the layout panel
 switches instantly; a bigger one blinks once.
+
+A cross-tab swap needs no journal: its stand-in pane is closed whether the swap finishes or
+fails, so nothing is left behind either way. Only a crash mid-swap can strand one, and it is
+labelled `arrange:swap` to say what it was — an empty shell, safe to close by hand.
 
 If herdr is killed halfway through one of those plans, the panes are still alive, just in the
 wrong tab. Before parking anything the plugin writes what it is about to do to

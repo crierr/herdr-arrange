@@ -49,6 +49,7 @@ I probed the live 0.8.2 server and read the relevant handlers. Findings:
 | set ratios | `layout.set_split_ratio` | `{tab_id, path:[bool], ratio}`, `false`=first / `true`=second. **Ratio is clamped to [0.1, 0.9]** (`Layout::set_ratio_at`). |
 | move across tabs | `pane.move` | `destination: {type:"tab", tab_id, target_pane_id, split:"right"\|"down", ratio}`. Preserves pane id, terminal id and pid. |
 | new tab / workspace | `pane.move` | `destination: {type:"new_tab"\|"new_workspace"}`; auto-closes the source tab when the last pane leaves (`closed_tab_id` in the response). |
+| stand-in pane | `pane.split` / `pane.close` / `pane.rename` | `{target_pane_id, direction:"right"\|"down", ratio, focus}` → `{pane}`; a close collapses the slot onto the sibling and drops an emptied tab. Only the cross-tab swap needs these: a fresh shell holds a slot open, which is a **new** pane, so nothing else may use them. |
 | popup UI | `plugin.pane.open` | `placement:"popup"`, `width`/`height` as cells or `"NN%"`; oversized values clamp down to the terminal area. |
 | focus | `pane.focus` / `tab.focus` / `workspace.focus` | `{pane_id}` etc. |
 | errors to user | `notification.show` | for `ui_busy` and friends |
@@ -62,6 +63,9 @@ There is **no non-destructive tree-restructure API**:
   PTYs, scrollback, or running processes". **Unusable for us** — it would kill the agents.
 - `pane.move` into the *source* tab returns `changed:false, reason:"same_tab"`. The docs say
   "same-tab layout changes remain `pane.swap`", and `pane.swap` cannot change shape.
+- `pane.swap` across tabs returns `changed:false, reason:"cross_tab"` (verified live): it
+  rewrites one tab's split tree and nothing else. A cross-tab trade has to be built from
+  `pane.move`, which is what the stand-in pane is for — see §8.
 
 So `H/J/K/L` re-split and the `1`–`5` layout presets have no direct API.
 
@@ -449,9 +453,9 @@ and scrolled in a `bubbles/viewport`.
 
 ```
   [1] w1S  herdr-arrange
-   ├─ t1  main
+   ├─ t1  main  (current)                   (dimmed)
    │  ├─ p2  claude  (current)              (dimmed)
- ▸ │  └─ p5  nvim  ← swap this pane with p5
+ ▸ │  └─ p5  nvim  ← move next to p5, press s to swap
    ├─ t2  logs
    │  └─ p7  tail
    └─ [c] new tab in this workspace         (only under the current workspace)
@@ -459,12 +463,14 @@ and scrolled in a `bubbles/viewport`.
    └─ …
   [N] new workspace
 ────────────────────────────────────────────────────────────
- j/k move  h/l fold  enter apply  t layout  esc close
- c new tab here  1-9 workspace  N new workspace
+ j/k move  h/l fold  enter apply  s swap  esc close
+ c new tab here  1-9 workspace  N new workspace  t layout
 ```
 
-- Current workspace / tab / pane are **dimmed** (as specified) and the current pane is
-  marked `(current)`.
+- Current workspace / tab / pane are **dimmed** (as specified), and the current **pane and
+  tab** are both marked `(current)`: the tree opens folded to the tabs, where the pane's own
+  row is not on screen, and one dim row among tabs reads as just another row. The selected
+  row is **bold**, because the ▸ alone is a thin mark in a list of near-identical rows.
 - `h`/`l` and left/right **fold** the tree through three levels: workspaces, workspaces and
   their tabs (where it opens), and everything. One level for the whole tree rather than a
   fold per node — the tree is three deep and is there to be read at a glance. The popup is
@@ -474,17 +480,33 @@ and scrolled in a `bubbles/viewport`.
   remembered. Unfolding therefore lands back where it came from, which is also how the tree
   opens with the arranged pane's *tab* selected and reveals the pane itself on the first `l`.
 - The **selected row** states exactly what `enter` will do, beside the row itself — one of
-  *new tab here* / *move this pane to tab X* / *swap this pane with pane X* /
-  *back to layout mode*. It reads as an annotation of the row it is on, which is what keeps
-  it short enough to sit there, and it is dropped rather than wrapped when a long label
-  leaves no room (a wrapped line would push the help off the bottom of the popup).
-  It was a line of its own until the tree wanted that line back.
+  *move to a new tab* / *move to workspace X* / *move to tab X* / *move next to pane X* /
+  *back to layout mode*. Every one starts with the verb, since sending the pane somewhere is
+  the one thing the tree does, and reading down a column of them says where each row leads.
+  It reads as an annotation of the row it is on, which is what keeps it short enough to sit
+  there (no "this pane": there is only one pane in play), and it is dropped rather than
+  wrapped when a long label leaves no room (a wrapped line would push the help off the
+  bottom of the popup). It was a line of its own until the tree wanted that line back.
 - Selection starts on the current pane, or on the row standing in for it while it is folded
   away.
 - `1`–`9` = that workspace's "new tab here" action directly. `c` = new tab in the current
   workspace. `N` = new workspace.
-- After a **tab/new-tab** action → focus the destination and switch to **layout mode** on it.
-  After a **pane swap** action → exit (per spec). After **enter on the current pane** →
+- **enter on a pane** = land beside it, wherever it is: one `pane.move` into another tab, a
+  planner rebuild in this one (`pane.move` back into its own tab is refused). One row kind,
+  one meaning — the tab boundary is herdr's problem, not the user's.
+- **`s` on a pane** = the two trade places, each taking the other's slot at the other's size.
+  In the same tab that is one `pane.swap` — no flicker, which is why the preview advertises it
+  against a rebuild. Across tabs `pane.swap` refuses (`reason:"cross_tab"`), so it is built
+  from moves around a **stand-in pane**: split a temporary neighbour off this pane, send this
+  pane beside the target, bring the target back beside the stand-in, close the stand-in. A
+  two-way split collapses onto its survivor, so each pane inherits the other's slot *and*
+  ratio; the stand-in is also what keeps a one-pane tab open while its pane is away. Five
+  calls and a spawned shell, so it blinks. The stand-in is labelled `arrange:swap` and closed
+  on every path, success or failure, so a crash is the only way to leave one behind.
+- **`s` on a tab** = trade places with its **first pane** — the row unfolding would show first.
+  The tree opens folded to the tabs, so `s` has to mean something there.
+- After a **tab/new-tab/pane** action → focus the destination and switch to **layout mode**
+  on it. After a **pane swap** → exit (per spec). After **enter on the current pane** →
   layout mode if the tab has >1 pane, else no-op.
 
 Moves into a tab are `pane.move {destination:{type:"tab", tab_id, split:"right"}}` — the

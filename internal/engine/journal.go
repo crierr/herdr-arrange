@@ -14,6 +14,11 @@ import (
 // can recognise in the tab strip.
 const ParkingLabel = "arrange:parking"
 
+// SwapPaneLabel is the label given to the stand-in pane a cross-tab swap holds a
+// slot with. Like ParkingLabel it is for the crash case: the pane lives for three
+// calls, and a leftover one should say where it came from.
+const SwapPaneLabel = "arrange:swap"
+
 // journalName is the file, under the plugin's state directory, that records an
 // in-flight rebuild.
 const journalName = "parking.json"

@@ -180,8 +180,7 @@ func sideWord(dir herdr.Direction) string {
 func (m Model) multiPane() bool { return m.tab != nil && m.tab.PaneCount() > 1 }
 
 func (m Model) flashSinglePane() (tea.Model, tea.Cmd) {
-	m.status, m.statusKind = "this tab has only one pane", statusFlash
-	return m, nil
+	return m.flash("this tab has only one pane")
 }
 
 // layoutView renders layout mode: a static help panel over the two status lines.

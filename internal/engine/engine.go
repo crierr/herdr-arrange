@@ -25,6 +25,9 @@ type Client interface {
 	SwapDirection(ctx context.Context, paneID string, dir herdr.Direction) (*herdr.SwapResult, error)
 	SwapPanes(ctx context.Context, sourcePaneID, targetPaneID string) (*herdr.SwapResult, error)
 	MovePane(ctx context.Context, paneID string, dest herdr.Destination, focus bool) (*herdr.MoveResult, error)
+	SplitPane(ctx context.Context, targetPaneID string, split herdr.SplitDirection, ratio float64) (*herdr.PaneInfo, error)
+	ClosePane(ctx context.Context, paneID string) error
+	RenamePane(ctx context.Context, paneID, label string) error
 	SetSplitRatio(ctx context.Context, tabID string, path []bool, ratio float64) error
 	FocusPane(ctx context.Context, paneID string) error
 	Zoom(ctx context.Context, paneID, mode string) (*herdr.ZoomResult, error)
@@ -251,9 +254,9 @@ func (e *Engine) MoveToTab(ctx context.Context, tabID string) error {
 // still holds a usable pane, while half the height often does not, and a pane arriving
 // beside its host reads as landing next to it rather than under it.
 //
-// This is how the tree view offers panes in other tabs as destinations: pane.swap
-// cannot cross a tab boundary, so landing next to the chosen pane is the closest
-// thing to a cross-tab swap that keeps the terminal alive.
+// This is how the tree view offers panes in other tabs as destinations: one call,
+// and the pane keeps its id, terminal and process. Trading places with the pane
+// there instead is SwapWithPane, which costs more.
 func (e *Engine) MoveToTabBeside(ctx context.Context, tabID, targetPaneID string) error {
 	if tabID == e.tabID {
 		return tree.ErrNoChange
@@ -261,11 +264,49 @@ func (e *Engine) MoveToTabBeside(ctx context.Context, tabID, targetPaneID string
 	return e.moveSelf(ctx, herdr.DestTab(tabID, targetPaneID, herdr.Right, nil))
 }
 
-// SwapWithPane exchanges the pane with a named pane. Both must be in the same
-// tab, which is why the tree view only offers this for same-tab panes.
-func (e *Engine) SwapWithPane(ctx context.Context, targetPaneID string) error {
+// MoveBesidePane puts the pane beside another pane, wherever that pane lives. It is
+// what enter on a pane in the tree view does, so that one row kind means one thing
+// however far away the row is.
+//
+// Another tab is a single pane.move; this pane's own tab is not, because herdr
+// refuses a move into the tab the pane is already in (Reason "same_tab"). There the
+// tab is rebuilt instead: the pane comes out of the split tree and goes back in
+// beside the target, which the planner turns into swaps and, when it has to, a trip
+// through the parking tab. Swapping the two panes outright is the cheap alternative,
+// and what `s` in the tree view is for — see SwapWithPane.
+func (e *Engine) MoveBesidePane(ctx context.Context, tabID, targetPaneID string) error {
+	if tabID != e.tabID {
+		return e.MoveToTabBeside(ctx, tabID, targetPaneID)
+	}
 	if targetPaneID == e.paneID {
 		return tree.ErrNoChange
+	}
+	t, err := e.Tab(ctx)
+	if err != nil {
+		return err
+	}
+	rest := tree.Remove(t.Tree, e.paneID)
+	if rest == nil || !rest.Has(targetPaneID) {
+		return fmt.Errorf("%s: %w", targetPaneID, tree.ErrNotFound)
+	}
+	// An even split of the target's slot, which is what herdr gives a pane.move
+	// with no ratio: landing beside a pane should look the same in either tab.
+	return e.Reshape(ctx, t, tree.Insert(rest, targetPaneID, e.paneID, herdr.Right, 0.5))
+}
+
+// SwapWithPane exchanges the pane with a named pane, wherever that pane lives:
+// each ends up in the other's place, at the other's size. tabID is the tab the
+// target is in; an empty one means this pane's own tab.
+//
+// In one tab that is a single pane.swap. Across tabs herdr refuses it — pane.swap
+// rewrites one tab's split tree and reports Reason "cross_tab" for anything else —
+// so the exchange is built out of moves instead; see exchangeWith.
+func (e *Engine) SwapWithPane(ctx context.Context, tabID, targetPaneID string) error {
+	if targetPaneID == e.paneID {
+		return tree.ErrNoChange
+	}
+	if tabID != "" && tabID != e.tabID {
+		return e.exchangeWith(ctx, tabID, targetPaneID)
 	}
 	res, err := e.client.SwapPanes(ctx, e.paneID, targetPaneID)
 	if err != nil {
@@ -275,6 +316,62 @@ func (e *Engine) SwapWithPane(ctx context.Context, targetPaneID string) error {
 		return fmt.Errorf("cannot swap with %s (%s): %w", targetPaneID, res.Reason, tree.ErrNoChange)
 	}
 	return nil
+}
+
+// exchangeWith trades places with a pane in another tab, which pane.swap will not
+// do, out of moves, which keep pane ids, terminals and processes alive.
+//
+// The trick is a stand-in pane. A two-way split collapses onto whichever child is
+// left, so a pane moved in beside the stand-in inherits the exact slot — and ratio —
+// that the pane it replaces had:
+//
+//	                      this tab      the target's tab
+//	split beside A        [A | tmp]     [B]
+//	send A beside B       [tmp]         [B | A]
+//	bring B beside tmp    [tmp | B]     [A]
+//	close tmp             [B]           [A]
+//
+// The stand-in also holds this tab open while A is away: were A the only pane in
+// it, herdr would close the tab as A left and B would have nowhere to come back to.
+//
+// It costs a shell spawned and killed, and five calls where a same-tab swap is one,
+// which is why this is the cross-tab path only.
+func (e *Engine) exchangeWith(ctx context.Context, tabID, targetPaneID string) error {
+	home := e.tabID // e.tabID follows this pane, and this pane is about to move
+
+	stand, err := e.client.SplitPane(ctx, e.paneID, herdr.Right, 0.5)
+	if err != nil {
+		return fmt.Errorf("make room for the swap: %w", err)
+	}
+	// Labelled so a swap interrupted by a crash leaves a pane a human can place, the
+	// way the parking tab does. That is cosmetic, so a failure is not worth
+	// abandoning a swap that is otherwise going fine.
+	_ = e.client.RenamePane(ctx, stand.PaneID, SwapPaneLabel)
+
+	if err = e.MoveToTabBeside(ctx, tabID, targetPaneID); err == nil {
+		res, back := e.client.MovePane(ctx, targetPaneID, herdr.DestTab(home, stand.PaneID, herdr.Right, nil), false)
+		if back == nil && !res.Changed {
+			back = fmt.Errorf("%s stayed put (%s): %w", targetPaneID, res.Reason, tree.ErrNoChange)
+		}
+		if back != nil {
+			// This pane is beside the target and staying there: half a swap is a
+			// move, and the message has to say which half happened.
+			err = fmt.Errorf("moved beside %s, but could not bring it back: %w", targetPaneID, back)
+		}
+	}
+
+	// The stand-in goes either way: on the happy path closing it is the last step of
+	// the swap, and on a failure it is what the swap would otherwise leave behind.
+	if closeErr := e.client.ClosePane(ctx, stand.PaneID); closeErr != nil && err == nil {
+		err = fmt.Errorf("close the stand-in pane %s: %w", stand.PaneID, closeErr)
+	}
+	if err != nil {
+		return err
+	}
+
+	// Focus followed this pane into its new tab, but closing a pane moves focus too;
+	// either way the user should end up in the pane they were arranging.
+	return e.client.FocusPane(ctx, e.paneID)
 }
 
 // moveSelf moves the operated-on pane and re-reads its identity, which changes

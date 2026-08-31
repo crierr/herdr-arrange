@@ -224,6 +224,28 @@ func (f *fakeClient) MovePane(_ context.Context, paneID string, dest herdr.Desti
 	return res, nil
 }
 
+// SplitPane makes the stand-in pane a cross-tab swap holds a slot with. The UI only
+// cares that one appears and is closed again, so the fixture layout is left alone.
+func (f *fakeClient) SplitPane(_ context.Context, targetPaneID string, split herdr.SplitDirection, ratio float64) (*herdr.PaneInfo, error) {
+	f.record("split %s %s %.2f", targetPaneID, split, ratio)
+	if err := f.fail(); err != nil {
+		return nil, err
+	}
+	return &herdr.PaneInfo{
+		PaneID: "w1S:p8", TabID: f.layout.TabID, WorkspaceID: f.layout.WorkspaceID,
+	}, nil
+}
+
+func (f *fakeClient) ClosePane(_ context.Context, paneID string) error {
+	f.record("close %s", paneID)
+	return f.fail()
+}
+
+func (f *fakeClient) RenamePane(_ context.Context, paneID, label string) error {
+	f.record("rename %s %q", paneID, label)
+	return nil
+}
+
 func (f *fakeClient) SetSplitRatio(_ context.Context, tabID string, path []bool, ratio float64) error {
 	f.record("ratio %s %v = %.2f", tabID, path, ratio)
 	return f.fail()

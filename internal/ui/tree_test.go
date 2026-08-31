@@ -4,6 +4,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
+
 	"github.com/crierr/herdr-arrange/internal/tree"
 )
 
@@ -51,7 +54,7 @@ func TestTreeViewShowsTheWholeSession(t *testing.T) {
 	// number in "[1]" lines up with their connectors.
 	want := []string{
 		"  [1] w1S  herdr-arrange",
-		"   ├─ t1  main  4 panes",
+		"   ├─ t1  main  4 panes  (current)",
 		"   │  ├─ p1",
 		" ▸ │  ├─ p2  claude  (current)  ← back to layout mode",
 		"   │  ├─ p3",
@@ -111,7 +114,7 @@ func TestTreeFoldsToThreeLevels(t *testing.T) {
 	// The pane the cursor was on is folded away, so its tab stands in for it.
 	tabs := []string{
 		"  [1] w1S  herdr-arrange",
-		" ▸ ├─ t1  main  4 panes  ← this pane is already in t1",
+		" ▸ ├─ t1  main  4 panes  (current)  ← already in tab main",
 		"   ├─ t2  logs  1 pane",
 		"   └─ [c] new tab in this workspace",
 		"  [2] wJ  notes",
@@ -126,7 +129,7 @@ func TestTreeFoldsToThreeLevels(t *testing.T) {
 		t.Fatalf("h from the tabs folded to %v", m.level)
 	}
 	wantLines(t, m, []string{
-		"▸ [1] w1S  herdr-arrange  ← new tab here",
+		"▸ [1] w1S  herdr-arrange  ← move to a new tab",
 		"  [2] wJ  notes",
 		"  [N] new workspace",
 	})
@@ -185,23 +188,23 @@ func TestTreePreviewNamesEveryAction(t *testing.T) {
 		want  string
 	}{
 		{"another workspace", func(r row) bool { return r.kind == rowWorkspace && r.workspaceID == "wJ" },
-			"new tab here"},
+			"move to workspace notes"},
 		{"the current workspace", func(r row) bool { return r.kind == rowWorkspace && r.workspaceID == curWS },
-			"new tab here"},
+			"move to a new tab"},
 		{"another tab", func(r row) bool { return r.kind == rowTab && r.tabID == "w1S:t2" },
-			"move this pane to t2"},
+			"move to tab logs"},
 		{"the current tab", func(r row) bool { return r.kind == rowTab && r.tabID == curTab },
-			"this pane is already in t1"},
+			"already in tab main"},
 		{"a pane in this tab", func(r row) bool { return r.kind == rowPane && r.paneID == "w1S:p3" },
-			"swap this pane with p3"},
+			"move next to p3, press s to swap"},
 		{"a pane elsewhere", func(r row) bool { return r.kind == rowPane && r.paneID == "wJ:p1" },
-			"move this pane next to p1"},
+			"move next to p1, press s to swap"},
 		{"the arranged pane", func(r row) bool { return r.self },
 			"back to layout mode"},
 		{"new tab here", func(r row) bool { return r.kind == rowNewTabHere },
-			"new tab here"},
+			"move to a new tab"},
 		{"new workspace", func(r row) bool { return r.kind == rowNewWorkspace },
-			"move this pane to a new workspace"},
+			"move to a new workspace"},
 	}
 
 	for _, c := range cases {
@@ -244,23 +247,128 @@ func TestTreeEnterOnATabMovesThePaneAndArrangesItThere(t *testing.T) {
 	}
 }
 
-// TestTreeEnterOnASameTabPaneSwapsAndCloses: a swap is the whole request, so
-// there is nothing left to do afterwards.
-func TestTreeEnterOnASameTabPaneSwapsAndCloses(t *testing.T) {
+// TestTreeEnterOnASameTabPaneMovesBesideIt: a pane row means the same thing wherever
+// it is, so enter lands this pane beside the selected one in its own tab too — which
+// takes a rebuild, because herdr refuses a move into the tab the pane is in.
+func TestTreeEnterOnASameTabPaneMovesBesideIt(t *testing.T) {
 	f, m := treeFixture(t)
 	m = selectRow(t, m, "p3", func(r row) bool { return r.paneID == "w1S:p3" })
 	m = press(t, m, "enter")
 
+	// The last leg of the rebuild is the arranged pane landing beside p3.
+	if !f.took("move w1S:p2 -> tab w1S:t1 w1S:p3") {
+		t.Fatalf("calls were: %s", f.log())
+	}
+	if m.mode != ModeLayout {
+		t.Error("the popup did not switch to layout mode")
+	}
+	if m.status != "moved next to p3" {
+		t.Errorf("status is %q", m.status)
+	}
+}
+
+// TestTreeSwapTradesPlacesAndCloses: `s` is the cheap alternative to landing beside a
+// pane — the tab keeps its shape — and a swap is the whole request, so there is
+// nothing left to do afterwards.
+func TestTreeSwapTradesPlacesAndCloses(t *testing.T) {
+	f, m := treeFixture(t)
+	m = selectRow(t, m, "p3", func(r row) bool { return r.paneID == "w1S:p3" })
+	m = press(t, m, "s")
+
 	if !f.took("swap w1S:p2 w1S:p3") {
 		t.Fatalf("calls were: %s", f.log())
+	}
+	if f.took("move") {
+		t.Errorf("the swap rebuilt the tab: %s", f.log())
 	}
 	if !m.quitting {
 		t.Error("the popup stayed open after the swap")
 	}
 }
 
-// TestTreeEnterOnAPaneElsewhereMovesBesideIt: pane.swap cannot cross tabs, so a
-// pane in another tab is offered as a place to land rather than as a swap.
+// TestTreeSwapCrossesTabs: a pane elsewhere is someone to trade places with, not
+// only somewhere to land, so `s` reaches it too — through the engine's stand-in
+// dance, since herdr's own pane.swap stops at the tab boundary.
+func TestTreeSwapCrossesTabs(t *testing.T) {
+	f, m := treeFixture(t)
+	m = selectRow(t, m, "wJ:p1", func(r row) bool { return r.paneID == "wJ:p1" })
+	m = press(t, m, "s")
+
+	// The stand-in holds this pane's slot, the two panes cross, and the stand-in goes.
+	for _, want := range []string{
+		"split w1S:p2 right",
+		"move w1S:p2 -> tab wJ:t1 wJ:p1",
+		"move wJ:p1 -> tab w1S:t1 w1S:p8",
+		"close w1S:p8",
+	} {
+		if !f.took(want) {
+			t.Fatalf("no %q; calls were: %s", want, f.log())
+		}
+	}
+	if !m.quitting {
+		t.Error("the popup stayed open after the swap")
+	}
+}
+
+// TestTreeSwapOnATabTakesItsFirstPane: the tree opens folded to the tabs, so `s`
+// has to mean something there — and what it means is the row unfolding would show
+// first, which is the same pane enter's "move to tab" would land beside.
+func TestTreeSwapOnATabTakesItsFirstPane(t *testing.T) {
+	f, m := treeFixture(t)
+	m = selectRow(t, m, "another tab", func(r row) bool { return r.kind == rowTab && r.tabID == "w1S:t2" })
+	m = press(t, m, "s")
+
+	// w1S:t2 holds one pane, w1S:p7, and both panes are in this workspace's tabs —
+	// so this is the cross-tab exchange, not a pane.swap.
+	if !f.took("move w1S:p7 -> tab w1S:t1") {
+		t.Fatalf("the tab's first pane did not come back; calls were: %s", f.log())
+	}
+	if !f.took("move w1S:p2 -> tab w1S:t2 w1S:p7") {
+		t.Fatalf("the arranged pane did not go beside p7; calls were: %s", f.log())
+	}
+	if !m.quitting {
+		t.Error("the popup stayed open after the swap")
+	}
+}
+
+// TestTreeSwapSaysWhenItCannot: a workspace row and the arranged pane are the two
+// things there is nothing to trade places with, so `s` says so rather than moving
+// the pane somewhere the user did not ask for.
+func TestTreeSwapSaysWhenItCannot(t *testing.T) {
+	cases := []struct {
+		what  string
+		match func(row) bool
+		want  string
+	}{
+		{"a workspace", func(r row) bool { return r.kind == rowWorkspace && r.workspaceID == "wJ" },
+			"select a pane or a tab to swap with"},
+		{"new tab here", func(r row) bool { return r.kind == rowNewTabHere },
+			"select a pane or a tab to swap with"},
+		{"the arranged pane", func(r row) bool { return r.self },
+			"select another pane to swap with"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.what, func(t *testing.T) {
+			f, m := treeFixture(t)
+			m = selectRow(t, m, c.what, c.match)
+			m = press(t, m, "s")
+
+			if m.statusKind != statusFlash || m.status != c.want {
+				t.Errorf("status is %v %q, want a flash of %q", m.statusKind, m.status, c.want)
+			}
+			if len(f.calls) != 0 {
+				t.Errorf("the session was touched: %s", f.log())
+			}
+			if m.quitting || m.mode != ModeTree {
+				t.Error("the popup left tree mode")
+			}
+		})
+	}
+}
+
+// TestTreeEnterOnAPaneElsewhereMovesBesideIt: a pane in another tab is a place to
+// land, in one pane.move — and never a swap, which cannot cross a tab boundary.
 func TestTreeEnterOnAPaneElsewhereMovesBesideIt(t *testing.T) {
 	f, m := treeFixture(t)
 	m = selectRow(t, m, "wJ:p1", func(r row) bool { return r.paneID == "wJ:p1" })
@@ -424,6 +532,28 @@ func TestTreeSelectionSurvivesAReload(t *testing.T) {
 	m = press(t, m, "enter")
 	if m.cursor != was {
 		t.Errorf("the cursor moved from %d to %d", was, m.cursor)
+	}
+}
+
+// TestTreeSelectedRowIsBold: the ▸ is one thin mark at the left edge of a list of
+// near-identical rows, so the row's own words carry the selection too.
+//
+// The rest of the suite strips styling, and the profile the tests run under has none
+// to strip; this one turns colour on to see the attribute at all.
+func TestTreeSelectedRowIsBold(t *testing.T) {
+	was := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI)
+	defer lipgloss.SetColorProfile(was)
+
+	_, m := treeFixture(t)
+	r := m.rows[rowAt(t, m, "another tab", func(r row) bool { return r.kind == rowTab && r.tabID == "w1S:t2" })]
+
+	bold := "\x1b[1m" + r.label
+	if got := m.renderRow(r, true); !strings.Contains(got, bold) {
+		t.Errorf("the selected row renders as %q, want %q bold", got, r.label)
+	}
+	if got := m.renderRow(r, false); strings.Contains(got, bold) {
+		t.Errorf("an unselected row renders as %q, want its label unbolded", got)
 	}
 }
 

@@ -1,6 +1,6 @@
 id = "herdr-arrange"
 name = "Arrange"
-version = "0.1.0"
+version = "0.2.0"
 description = "Rearrange panes from a popup: swap, re-split, resize, presets, cross-tab moves"
 
 # popup placement for plugin panes landed in 0.7.4; layout.set_split_ratio in 0.7.2.

@@ -159,7 +159,7 @@ placement (CLI enum is `overlay|split|tab|zoomed`) and `layout.*` has no CLI wra
 ```toml
 id = "herdr-arrange"
 name = "Arrange"
-version = "0.2.0"
+version = "0.2.1"
 min_herdr_version = "0.7.4"       # popup placement (0.7.4); layout.set_split_ratio (0.7.2)
 description = "Interactive pane move, swap, re-split and layout"
 platforms = ["macos", "linux"]

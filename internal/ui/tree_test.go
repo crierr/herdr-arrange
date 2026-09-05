@@ -247,6 +247,26 @@ func TestTreeEnterOnATabMovesThePaneAndArrangesItThere(t *testing.T) {
 	}
 }
 
+// TestTreeEnterOnAWorkspaceMovesThePaneAndCloses: a workspace row creates a new
+// tab there, so the completed move leaves nothing for the popup to arrange.
+func TestTreeEnterOnAWorkspaceMovesThePaneAndCloses(t *testing.T) {
+	f, m := treeFixture(t)
+	m = selectRow(t, m, "another workspace", func(r row) bool {
+		return r.kind == rowWorkspace && r.workspaceID == "wJ"
+	})
+	m = press(t, m, "enter")
+
+	if !f.took("move w1S:p2 -> new_tab wJ") {
+		t.Fatalf("calls were: %s", f.log())
+	}
+	if m.status != "moved to a new tab in notes" {
+		t.Errorf("status is %q", m.status)
+	}
+	if !m.quitting {
+		t.Fatal("the popup stayed open")
+	}
+}
+
 // TestTreeEnterOnASameTabPaneMovesBesideIt: a pane row means the same thing wherever
 // it is, so enter lands this pane beside the selected one in its own tab too — which
 // takes a rebuild, because herdr refuses a move into the tab the pane is in.
@@ -444,14 +464,15 @@ func TestTreeSinglePaneTabHasNoLayoutToShow(t *testing.T) {
 // the walk down the tree.
 func TestTreeShortcutsActWithoutNavigating(t *testing.T) {
 	cases := []struct {
-		key    string
-		want   string
-		status string
+		key      string
+		want     string
+		status   string
+		quitting bool
 	}{
-		{"c", "move w1S:p2 -> new_tab", "moved to a new tab"},
-		{"N", "move w1S:p2 -> new_workspace", "moved to a new workspace"},
-		{"1", "move w1S:p2 -> new_tab w1S", "moved to a new tab in herdr-arrange"},
-		{"2", "move w1S:p2 -> new_tab wJ", "moved to a new tab in notes"},
+		{"c", "move w1S:p2 -> new_tab", "moved to a new tab", true},
+		{"N", "move w1S:p2 -> new_workspace", "moved to a new workspace", true},
+		{"1", "move w1S:p2 -> new_tab w1S", "moved to a new tab in herdr-arrange", true},
+		{"2", "move w1S:p2 -> new_tab wJ", "moved to a new tab in notes", true},
 	}
 
 	for _, c := range cases {
@@ -465,7 +486,10 @@ func TestTreeShortcutsActWithoutNavigating(t *testing.T) {
 			if m.status != c.status {
 				t.Errorf("status is %q, want %q", m.status, c.status)
 			}
-			if m.mode != ModeLayout {
+			if m.quitting != c.quitting {
+				t.Errorf("quitting=%v, want %v", m.quitting, c.quitting)
+			}
+			if !c.quitting && m.mode != ModeLayout {
 				t.Error("the popup did not switch to layout mode")
 			}
 		})

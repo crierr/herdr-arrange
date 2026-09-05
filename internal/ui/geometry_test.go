@@ -225,31 +225,27 @@ func TestAHandRunUINeverReopens(t *testing.T) {
 	}
 }
 
-// TestAReopenCarriesTheResultOver: an action that switches views is the one that most
-// wants to report what it did, and closing the popup would otherwise take the report
-// with it.
-func TestAReopenCarriesTheResultOver(t *testing.T) {
+// TestANewTabActionClosesAfterSuccess: creating a new tab completes the request, so
+// tree mode closes instead of reopening in layout mode.
+func TestANewTabActionClosesAfterSuccess(t *testing.T) {
 	f := newFakeClient(evenFour())
-	f.snapshot = hugeSession()                     // so tree mode is in a popup layout mode cannot use
-	m := press(t, popupSized(t, f, ModeTree), "c") // move to a new tab, then arrange it
+	f.snapshot = hugeSession()
+	m := press(t, popupSized(t, f, ModeTree), "c")
 
 	if !f.took("move w1S:p2 -> new_tab") {
 		t.Fatalf("calls were: %s", f.log())
 	}
-	if m.reopen == nil {
-		t.Fatal("the popup was not resized for layout mode")
+	if !m.quitting {
+		t.Fatal("the popup stayed open")
 	}
-	if m.reopen.Status != "moved to a new tab" {
-		t.Errorf("the replacement is told %q", m.reopen.Status)
+	if m.reopen != nil {
+		t.Errorf("the popup requested a reopen: %+v", m.reopen)
 	}
-
-	// And the popup that replaces it says so.
-	m = startWith(t, newFakeClient(tree.Leaf(curPane)), Options{Mode: ModeLayout, Status: m.reopen.Status})
-	if m.statusKind != statusInfo {
-		t.Errorf("a carried result is styled as %v", m.statusKind)
+	if m.statusKind != statusInfo || m.status != "moved to a new tab" {
+		t.Errorf("status is %v %q", m.statusKind, m.status)
 	}
-	if !strings.Contains(plain(m.View()), "moved to a new tab") {
-		t.Errorf("the carried result is not on screen:\n%s", plain(m.View()))
+	if m.View() != "" {
+		t.Errorf("a closing popup still drew something: %q", m.View())
 	}
 }
 

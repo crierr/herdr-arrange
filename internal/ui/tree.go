@@ -416,7 +416,11 @@ func (m Model) treeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "enter":
 		if m.cursor < len(m.rows) {
-			return m.act(m.rows[m.cursor])
+			where := nextLayout
+			if m.rows[m.cursor].kind == rowWorkspace {
+				where = nextQuit
+			}
+			return m.act(m.rows[m.cursor], where)
 		}
 		return m, nil
 
@@ -434,14 +438,14 @@ func (m Model) treeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.switchTo(ModeLayout)
 
 	case "c":
-		return m.jump(func(r row) bool { return r.kind == rowNewTabHere })
+		return m.jump(func(r row) bool { return r.kind == rowNewTabHere }, nextQuit)
 	case "N":
-		return m.jump(func(r row) bool { return r.kind == rowNewWorkspace })
+		return m.jump(func(r row) bool { return r.kind == rowNewWorkspace }, nextQuit)
 	}
 
 	// 1-9 select a workspace directly.
 	if n, err := strconv.Atoi(msg.String()); err == nil && n >= 1 && n <= 9 {
-		return m.jump(func(r row) bool { return r.kind == rowWorkspace && r.shortcut == strconv.Itoa(n) })
+		return m.jump(func(r row) bool { return r.kind == rowWorkspace && r.shortcut == strconv.Itoa(n) }, nextQuit)
 	}
 	return m, nil
 }
@@ -476,7 +480,7 @@ func (m Model) foldTo(level expandLevel) Model {
 
 // jump moves the selection to a shortcut's row and acts on it, so the user sees
 // what the key did.
-func (m Model) jump(match func(row) bool) (tea.Model, tea.Cmd) {
+func (m Model) jump(match func(row) bool, where next) (tea.Model, tea.Cmd) {
 	for _, r := range m.rows {
 		if match(r) {
 			// The row may be folded away — 1-9 and [c] work at any level — so ask for
@@ -484,30 +488,30 @@ func (m Model) jump(match func(row) bool) (tea.Model, tea.Cmd) {
 			m.want = r.key()
 			m.selectWant()
 			m.syncViewport()
-			return m.act(r)
+			return m.act(r, where)
 		}
 	}
 	return m, nil
 }
 
 // act performs the selected row's action.
-func (m Model) act(r row) (tea.Model, tea.Cmd) {
+func (m Model) act(r row, where next) (tea.Model, tea.Cmd) {
 	eng := m.eng
 
 	switch r.kind {
 	case rowWorkspace:
 		ws, name := r.workspaceID, r.name
-		return m, m.op(nextLayout, func(ctx context.Context) (string, error) {
+		return m, m.op(where, func(ctx context.Context) (string, error) {
 			return "moved to a new tab in " + name, eng.MoveToNewTab(ctx, ws)
 		})
 
 	case rowNewTabHere:
-		return m, m.op(nextLayout, func(ctx context.Context) (string, error) {
+		return m, m.op(nextQuit, func(ctx context.Context) (string, error) {
 			return "moved to a new tab", eng.MoveToNewTab(ctx, "")
 		})
 
 	case rowNewWorkspace:
-		return m, m.op(nextLayout, func(ctx context.Context) (string, error) {
+		return m, m.op(nextQuit, func(ctx context.Context) (string, error) {
 			return "moved to a new workspace", eng.MoveToNewWorkspace(ctx)
 		})
 

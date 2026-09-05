@@ -97,13 +97,13 @@ func (m Model) layoutKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "c":
 		eng := m.eng
-		return m, m.op(nextStay, func(ctx context.Context) (string, error) {
+		return m, m.op(nextQuit, func(ctx context.Context) (string, error) {
 			return "moved to a new tab", eng.MoveToNewTab(ctx, "")
 		})
 
 	case "N":
 		eng := m.eng
-		return m, m.op(nextStay, func(ctx context.Context) (string, error) {
+		return m, m.op(nextQuit, func(ctx context.Context) (string, error) {
 			return "moved to a new workspace", eng.MoveToNewWorkspace(ctx)
 		})
 

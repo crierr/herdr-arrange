@@ -15,46 +15,47 @@ import (
 // arrow form of a binding are proved to do the same thing.
 func TestLayoutKeysReachTheRightOperation(t *testing.T) {
 	cases := []struct {
-		key  string
-		want string
+		key      string
+		want     string
+		quitting bool
 	}{
 		// A directional swap is one call, with no tree maths behind it.
-		{"h", "swap-dir w1S:p2 left"},
-		{"left", "swap-dir w1S:p2 left"},
-		{"j", "swap-dir w1S:p2 down"},
-		{"down", "swap-dir w1S:p2 down"},
-		{"k", "swap-dir w1S:p2 up"},
-		{"up", "swap-dir w1S:p2 up"},
-		{"l", "swap-dir w1S:p2 right"},
-		{"right", "swap-dir w1S:p2 right"},
+		{"h", "swap-dir w1S:p2 left", false},
+		{"left", "swap-dir w1S:p2 left", false},
+		{"j", "swap-dir w1S:p2 down", false},
+		{"down", "swap-dir w1S:p2 down", false},
+		{"k", "swap-dir w1S:p2 up", false},
+		{"up", "swap-dir w1S:p2 up", false},
+		{"l", "swap-dir w1S:p2 right", false},
+		{"right", "swap-dir w1S:p2 right", false},
 
 		// Resizing moves a boundary rather than a pane, so it too is one call, with
 		// herdr picking the step: the amount goes over as zero.
-		{"ctrl+h", "resize w1S:p2 left 0.00"},
-		{"ctrl+left", "resize w1S:p2 left 0.00"},
-		{"ctrl+j", "resize w1S:p2 down 0.00"},
-		{"ctrl+down", "resize w1S:p2 down 0.00"},
-		{"ctrl+k", "resize w1S:p2 up 0.00"},
-		{"ctrl+up", "resize w1S:p2 up 0.00"},
-		{"ctrl+l", "resize w1S:p2 right 0.00"},
-		{"ctrl+right", "resize w1S:p2 right 0.00"},
+		{"ctrl+h", "resize w1S:p2 left 0.00", false},
+		{"ctrl+left", "resize w1S:p2 left 0.00", false},
+		{"ctrl+j", "resize w1S:p2 down 0.00", false},
+		{"ctrl+down", "resize w1S:p2 down 0.00", false},
+		{"ctrl+k", "resize w1S:p2 up 0.00", false},
+		{"ctrl+up", "resize w1S:p2 up 0.00", false},
+		{"ctrl+l", "resize w1S:p2 right 0.00", false},
+		{"ctrl+right", "resize w1S:p2 right 0.00", false},
 
 		// Re-splitting left within [[p1 | p2] | [p3 | p4]] only reorders leaves,
 		// so the reconciler gets there with an explicit swap rather than a rebuild.
-		{"H", "swap w1S:p1 w1S:p2"},
-		{"shift+left", "swap w1S:p1 w1S:p2"},
+		{"H", "swap w1S:p1 w1S:p2", false},
+		{"shift+left", "swap w1S:p1 w1S:p2", false},
 
 		// Re-splitting up changes a split's direction, which needs a rebuild: the
 		// first pane out of the tab creates the parking tab.
-		{"K", "move w1S:p1 -> new_tab"},
-		{"shift+up", "move w1S:p1 -> new_tab"},
+		{"K", "move w1S:p1 -> new_tab", false},
+		{"shift+up", "move w1S:p1 -> new_tab", false},
 
 		// even-vertical is a different shape, so it rebuilds too — and here the
 		// arranged pane is not the anchor, so it is parked and reinserted itself.
-		{"2", "move w1S:p2 -> tab w1S:t1"},
+		{"2", "move w1S:p2 -> tab w1S:t1", false},
 
-		{"c", "move w1S:p2 -> new_tab"},
-		{"N", "move w1S:p2 -> new_workspace"},
+		{"c", "move w1S:p2 -> new_tab", true},
+		{"N", "move w1S:p2 -> new_workspace", true},
 	}
 
 	for _, c := range cases {
@@ -68,8 +69,8 @@ func TestLayoutKeysReachTheRightOperation(t *testing.T) {
 			if m.statusKind == statusFail {
 				t.Errorf("%q reported a failure: %s", c.key, m.status)
 			}
-			if m.quitting {
-				t.Errorf("%q closed the popup", c.key)
+			if m.quitting != c.quitting {
+				t.Errorf("%q quitting=%v, want %v", c.key, m.quitting, c.quitting)
 			}
 		})
 	}
@@ -242,17 +243,19 @@ func TestSinglePaneTabStillMovesThePane(t *testing.T) {
 	}
 }
 
-// TestMovingToANewWorkspaceRetargetsThePane covers herdr's workspace-scoped ids:
-// the pane is renamed by the move, and the popup has to follow it.
-func TestMovingToANewWorkspaceRetargetsThePane(t *testing.T) {
+// TestMovingToANewWorkspaceClosesPopup checks that the successful move closes the popup.
+func TestMovingToANewWorkspaceClosesPopup(t *testing.T) {
 	f := newFakeClient(evenFour())
 	m := press(t, start(t, f, ModeLayout), "N")
 
-	if got := m.eng.PaneID(); got != "w2A:p1" {
-		t.Fatalf("the popup still points at %s", got)
+	if !f.took("move w1S:p2 -> new_workspace") {
+		t.Fatalf("calls were: %s", f.log())
 	}
-	if state := m.layoutState(); !strings.Contains(state, "w2A:t1") || !strings.Contains(state, "this pane: p1") {
-		t.Errorf("state line is %q", state)
+	if !m.quitting {
+		t.Fatal("the popup stayed open")
+	}
+	if m.View() != "" {
+		t.Errorf("a closing popup still drew something: %q", m.View())
 	}
 }
 
